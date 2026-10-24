@@ -46,6 +46,178 @@ def _parse_since(since: str) -> datetime:
 # Commands
 # ──────────────────────────────────────────────────────────────────────────────
 
+@app.command("note")
+def note(
+    message: Annotated[str, typer.Argument(help="Short message to send to your subscribers right now")],
+    context: Annotated[str, typer.Option("--context", "-c", help="Optional context (branch, repo, etc.)")] = "",
+    no_push: Annotated[bool, typer.Option("--no-push", help="Submit to review queue instead of pushing immediately")] = False,
+):
+    """Send a quick note to your subscribers without LLM processing.
+
+    Examples:
+      vantage-ghost note "blocked on auth API, need access to staging"
+      vantage-ghost note "shipped dark mode" --context "pr/42"
+    """
+    from ghost_daemon import config as _cfg_mod
+    from ghost_daemon.daemon import GhostDaemon
+    from ghost_daemon.transport.push import push as _push
+    from vantage.schemas import ApprovalSource, DraftPayload, QuickNote
+
+    cfg = _cfg_mod.load()
+    daemon = GhostDaemon(cfg)
+
+    # Auto-detect context from git if not provided
+    if not context:
+        try:
+            import subprocess, os
+            result = subprocess.run(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                capture_output=True, text=True, cwd=os.getcwd(), timeout=3,
+            )
+            if result.returncode == 0:
+                branch = result.stdout.strip()
+                if branch and branch != "HEAD":
+                    context = f"branch:{branch}"
+        except Exception:
+            pass
+
+    payload = QuickNote(message=message.strip(), context=context)
+    draft = DraftPayload(
+        artifact_type="quick_note",
+        payload=payload,
+        developer_id=cfg.developer_id,
+    )
+    draft_id = daemon.gate.submit(draft)
+
+    if no_push:
+        url = f"http://{cfg.ui.bind_address}:{cfg.ui.port}/draft/{draft_id}"
+        typer.echo(f"Note submitted for review: {url}")
+        return
+
+    # Auto-approve and push immediately
+    approved = daemon.gate.approve(draft_id, source=ApprovalSource.POLICY)
+    registry = daemon.subscriber_registry
+    targets = registry.subscribers_for_channel("quick_note")
+
+    if not targets:
+        typer.echo("Note approved but no subscribers are configured for the 'quick_note' channel.")
+        typer.echo("Add --channels quick_note when running 'vantage-ghost subscribers add'.")
+        return
+
+    async def _do_push():
+        sent = 0
+        for row in targets:
+            identity = registry.to_identity(row)
+            ok = await _push(approved, identity, cfg.developer_id)
+            if ok:
+                typer.echo(f"  → {identity.name}: sent")
+                sent += 1
+            else:
+                typer.echo(f"  → {identity.name}: failed", err=True)
+        if sent:
+            await daemon.index_approved(approved)
+
+    asyncio.run(_do_push())
+
+
+@app.command("status")
+def status():
+    """Show daemon health: pending drafts, subscribers, session dirs, last activity."""
+    import socket
+    from ghost_daemon import config as _cfg_mod
+    from ghost_daemon.storage.sqlite_store import SQLiteStore
+    from ghost_daemon.subscribers.registry import SubscriberRegistry
+
+    cfg = _cfg_mod.load()
+
+    # ── Daemon status ──────────────────────────────────────────────────────────
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(0.3)
+    running = sock.connect_ex((cfg.ui.bind_address, cfg.ui.port)) == 0
+    sock.close()
+
+    dev_label = cfg.display_name or cfg.developer_id
+    typer.echo(f"Vantage — {dev_label}")
+    typer.echo("─" * 50)
+    typer.echo(f"{'Daemon':<16} {'running' if running else 'not running'}"
+               + (f"  http://{cfg.ui.bind_address}:{cfg.ui.port}" if running else ""))
+    typer.echo(f"{'Provider':<16} {cfg.llm.provider} / {cfg.llm.model}")
+    typer.echo(f"{'GitHub':<16} {cfg.github.repo or '(not configured)'}")
+    typer.echo()
+
+    # ── Drafts ─────────────────────────────────────────────────────────────────
+    store = SQLiteStore(cfg.sqlite_path)
+    pending = store.list_pending()
+    recent = store.list_recent(limit=50)
+    approved = [r for r in recent if r.status == "approved"]
+    rejected = [r for r in recent if r.status == "rejected"]
+
+    typer.echo("Drafts")
+
+    if pending:
+        from collections import Counter
+        counts = Counter(r.artifact_type for r in pending)
+        detail = ", ".join(f"{v} {k.replace('_', ' ')}" for k, v in counts.items())
+        typer.echo(f"  {'pending':<14} {len(pending)}   ({detail})")
+    else:
+        typer.echo(f"  {'pending':<14} 0")
+
+    if approved:
+        last = approved[0]
+        age = _age_label(last.reviewed_at)
+        typer.echo(f"  {'approved':<14} {len(approved)}   (last: {last.artifact_type.replace('_', ' ')}, {age})")
+    else:
+        typer.echo(f"  {'approved':<14} 0")
+
+    typer.echo(f"  {'rejected':<14} {len(rejected)}")
+    typer.echo()
+
+    # ── Subscribers ────────────────────────────────────────────────────────────
+    registry = SubscriberRegistry(cfg.sqlite_path)
+    rows = registry.list_all()
+    typer.echo("Subscribers")
+    if not rows:
+        typer.echo("  (none — use 'vantage-ghost subscribers add' to add one)")
+    else:
+        typer.echo(f"  {'NAME':<22} {'ID':<14} STATUS")
+        for row in rows:
+            st = "revoked" if row.revoked_at else "active"
+            typer.echo(f"  {row.name:<22} {row.id:<14} {st}")
+    typer.echo()
+
+    # ── Sessions ───────────────────────────────────────────────────────────────
+    typer.echo("Session directories")
+    dirs = cfg.resolved_session_dirs
+    if not dirs:
+        typer.echo("  (none found — check session_dirs in config.toml)")
+    else:
+        for d in dirs:
+            if d.exists():
+                count = sum(1 for _ in d.rglob("*.jsonl"))
+                typer.echo(f"  {d}  ({count} session files)")
+            else:
+                typer.echo(f"  {d}  (not found)")
+
+
+def _age_label(iso_ts: str | None) -> str:
+    if not iso_ts:
+        return "unknown"
+    try:
+        dt = datetime.fromisoformat(iso_ts)
+        secs = int((datetime.utcnow() - dt).total_seconds())
+        if secs < 0:
+            secs = 0
+        if secs < 60:
+            return f"{secs}s ago"
+        if secs < 3600:
+            return f"{secs // 60}m ago"
+        if secs < 86400:
+            return f"{secs // 3600}h ago"
+        return f"{secs // 86400}d ago"
+    except Exception:
+        return iso_ts[:10]
+
+
 @app.command()
 def run():
     """Start the background daemon and local UI server."""
@@ -859,6 +1031,218 @@ def _service_uninstall_launchd() -> None:
         typer.echo(f"Removed: {plist_path}")
     else:
         typer.echo("launchd plist not found — nothing to remove.")
+
+
+github_app = typer.Typer(help="GitHub integration — post PR drafts, ingest review comments.")
+app.add_typer(github_app, name="github")
+
+
+def _github_client(cfg):
+    """Build a GithubClient from config, raising Exit if token is missing."""
+    import os
+    from ghost_daemon.integrations.github import GithubClient
+
+    token = os.environ.get(cfg.github.token_env, "")
+    if not token:
+        typer.echo(
+            f"GitHub token not found. Set {cfg.github.token_env!r} in your environment "
+            f"or run: vantage-ghost key {cfg.github.token_env} --value <token>",
+            err=True,
+        )
+        raise typer.Exit(1)
+    return GithubClient(token=token, default_repo=cfg.github.repo)
+
+
+@github_app.command("post-pr")
+def github_post_pr(
+    draft_id: Annotated[str, typer.Argument(help="Draft ID of an approved pr_draft")],
+    repo: Annotated[str, typer.Option("--repo", "-r", help="GitHub repo 'owner/repo' (overrides config)")] = "",
+    pr: Annotated[int, typer.Option("--pr", "-n", help="PR number (auto-detected from branch if omitted)")] = 0,
+):
+    """Post an approved PR draft to GitHub as the PR description."""
+    from ghost_daemon import config as _cfg_mod
+    from ghost_daemon.daemon import GhostDaemon
+
+    cfg = _cfg_mod.load()
+    daemon = GhostDaemon(cfg)
+
+    row = daemon.store.get_draft(draft_id)
+    if not row:
+        typer.echo(f"Draft {draft_id!r} not found.", err=True)
+        raise typer.Exit(1)
+    if row.artifact_type != "pr_draft":
+        typer.echo(f"Draft {draft_id!r} is a {row.artifact_type!r}, not a pr_draft.", err=True)
+        raise typer.Exit(1)
+    if row.status not in ("approved", "pending"):
+        typer.echo(f"Draft status is {row.status!r}. Only approved or pending drafts can be posted.", err=True)
+        raise typer.Exit(1)
+
+    import json as _json
+    payload = _json.loads(row.edited_payload_json or row.payload_json)
+    title = payload.get("title", "")
+    _parts = []
+    if payload.get("summary"):
+        _parts.append(f"## Summary\n\n{payload['summary']}")
+    if payload.get("rationale"):
+        _parts.append(f"## Rationale\n\n{payload['rationale']}")
+    if payload.get("test_notes"):
+        _parts.append(f"## Testing\n\n{payload['test_notes']}")
+    if payload.get("risk_notes"):
+        _parts.append(f"## Risk\n\n{payload['risk_notes']}")
+    body = "\n\n".join(_parts) or payload.get("summary", "") or "(no description)"
+
+    github = _github_client(cfg)
+    effective_repo = repo or cfg.github.repo
+
+    async def _run():
+        pr_number = pr
+        if not pr_number:
+            branch = payload.get("branch", "")
+            if branch:
+                typer.echo(f"Auto-detecting PR for branch {branch!r} …")
+                pr_data = await github.find_pr_for_branch(branch, repo=effective_repo)
+                if pr_data:
+                    pr_number = pr_data["number"]
+                    typer.echo(f"Found PR #{pr_number}: {pr_data.get('title', '')}")
+                else:
+                    typer.echo("No open PR found for this branch. Pass --pr <number> to specify.", err=True)
+                    raise typer.Exit(1)
+            else:
+                typer.echo("Branch not found in draft — pass --pr <number>.", err=True)
+                raise typer.Exit(1)
+
+        ok = await github.update_pr_body(pr_number, body=body, repo=effective_repo)
+        if ok:
+            typer.echo(f"PR #{pr_number} description updated.")
+        else:
+            typer.echo(f"Failed to update PR #{pr_number}. Check token permissions.", err=True)
+            raise typer.Exit(1)
+
+    asyncio.run(_run())
+
+
+@github_app.command("ingest-reviews")
+def github_ingest_reviews(
+    repo: Annotated[str, typer.Option("--repo", "-r", help="GitHub repo 'owner/repo'")] = "",
+    pr: Annotated[int, typer.Option("--pr", "-n", help="PR number to fetch reviews for")] = 0,
+    all_open: Annotated[bool, typer.Option("--all-open", help="Fetch reviews from all open PRs")] = False,
+):
+    """Fetch PR review comments from GitHub and store them in Qdrant for digest context."""
+    from ghost_daemon import config as _cfg_mod
+    from ghost_daemon.daemon import GhostDaemon
+
+    cfg = _cfg_mod.load()
+    daemon = GhostDaemon(cfg)
+
+    if not daemon.qdrant:
+        typer.echo("Qdrant is not available — review ingestion requires vector storage.", err=True)
+        raise typer.Exit(1)
+
+    github = _github_client(cfg)
+    effective_repo = repo or cfg.github.repo
+    if not effective_repo:
+        typer.echo("Specify --repo owner/repo or set github.repo in config.toml.", err=True)
+        raise typer.Exit(1)
+
+    async def _run():
+        pr_numbers: list[int] = []
+        if all_open:
+            prs = await github.list_open_prs(repo=effective_repo)
+            pr_numbers = [p["number"] for p in prs]
+            typer.echo(f"Found {len(pr_numbers)} open PR(s): {pr_numbers}")
+        elif pr:
+            pr_numbers = [pr]
+        else:
+            typer.echo("Specify --pr <number> or --all-open.", err=True)
+            raise typer.Exit(1)
+
+        from vantage.schemas import IncrementalSummary
+
+        # Try to build an embedder for semantic search later
+        _embedder = None
+        try:
+            from ghost_daemon.models.providers.ollama import OllamaProvider
+            _embedder = OllamaProvider(
+                model=cfg.embeddings.model,
+                endpoint=cfg.embeddings.endpoint,
+                embed_model=cfg.embeddings.model,
+            )
+        except Exception:
+            pass
+
+        _ZERO_VEC = [0.0] * 768
+
+        async def _embed(text: str) -> list[float]:
+            if _embedder is None:
+                return _ZERO_VEC
+            try:
+                return await _embedder.embed(text)
+            except Exception:
+                return _ZERO_VEC
+
+        total = 0
+        for pr_num in pr_numbers:
+            reviews = await github.fetch_pr_reviews(pr_num, repo=effective_repo)
+            comments = await github.fetch_pr_review_comments(pr_num, repo=effective_repo)
+            texts: list[tuple[str, list[str]]] = []
+            for r in reviews:
+                if r.get("body"):
+                    author = r.get("user", {}).get("login", "unknown")
+                    state = r.get("state", "")
+                    text = f"PR #{pr_num} {state} review by @{author}: {r['body']}"
+                    texts.append((text, ["github", "pr_review", f"pr_{pr_num}"]))
+            for c in comments:
+                if c.get("body"):
+                    author = c.get("user", {}).get("login", "unknown")
+                    path = c.get("path", "")
+                    text = f"PR #{pr_num} inline comment by @{author} on {path}: {c['body']}"
+                    texts.append((text, ["github", "pr_comment", f"pr_{pr_num}"]))
+
+            for text, tags in texts:
+                vector = await _embed(text)
+                summary = IncrementalSummary(
+                    developer_id=cfg.developer_id,
+                    scope=f"github:{effective_repo}:pr{pr_num}",
+                    source_refs=[f"github:{effective_repo}/{pr_num}"],
+                    text=text[:2000],
+                    tags=tags,
+                )
+                await daemon.qdrant.upsert(summary, vector)
+            total += len(texts)
+            typer.echo(f"  PR #{pr_num}: ingested {len(texts)} review(s)")
+
+        typer.echo(f"\nTotal review documents ingested: {total}")
+
+    asyncio.run(_run())
+
+
+@github_app.command("list-prs")
+def github_list_prs(
+    repo: Annotated[str, typer.Option("--repo", "-r", help="GitHub repo 'owner/repo'")] = "",
+):
+    """List open PRs in the configured repository."""
+    from ghost_daemon import config as _cfg_mod
+
+    cfg = _cfg_mod.load()
+    github = _github_client(cfg)
+    effective_repo = repo or cfg.github.repo
+    if not effective_repo:
+        typer.echo("Specify --repo owner/repo or set github.repo in config.toml.", err=True)
+        raise typer.Exit(1)
+
+    async def _run():
+        prs = await github.list_open_prs(repo=effective_repo)
+        if not prs:
+            typer.echo("No open PRs.")
+            return
+        typer.echo(f"{'#':<6} {'BRANCH':<35} TITLE")
+        typer.echo("-" * 70)
+        for p in prs:
+            branch = p.get("head", {}).get("ref", "")
+            title = p.get("title", "")[:50]
+            typer.echo(f"{p['number']:<6} {branch:<35} {title}")
+
+    asyncio.run(_run())
 
 
 @app.command("update-check")

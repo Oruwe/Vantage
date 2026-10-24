@@ -7,6 +7,8 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from shadow_replica.notify.notifier import NotificationConfig
+
 
 def _replica_config_dir() -> Path:
     if sys.platform == "win32":
@@ -52,6 +54,7 @@ class ReplicaConfig:
     bind_port: int = 7475
     manager_token: str = ""
     trusted_devs: list[TrustedDev] = field(default_factory=list)
+    notifications: list[NotificationConfig] = field(default_factory=list)
     qdrant: QdrantConfig = field(default_factory=QdrantConfig)
     embeddings: EmbeddingsConfig = field(default_factory=EmbeddingsConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
@@ -86,6 +89,21 @@ def load(path: Path | None = None) -> ReplicaConfig:
         for d in data.get("trusted_devs", [])
     ]
 
+    notifications = [
+        NotificationConfig(
+            type=n.get("type", ""),
+            url=n.get("url", ""),
+            host=n.get("host", ""),
+            port=int(n.get("port", 587)),
+            username=n.get("username", ""),
+            password_env=n.get("password_env", ""),
+            from_addr=n.get("from_addr", ""),
+            to_addrs=list(n.get("to_addrs", [])),
+            artifact_types=list(n.get("artifact_types", [])),
+        )
+        for n in data.get("notifications", [])
+    ]
+
     manager_token = data.get("manager_token", "")
     generated = False
     if not manager_token:
@@ -102,6 +120,7 @@ def load(path: Path | None = None) -> ReplicaConfig:
         bind_port=data.get("bind_port", 7475),
         manager_token=manager_token,
         trusted_devs=trusted_devs,
+        notifications=notifications,
         qdrant=QdrantConfig(
             url=qdrant_data.get("url", "http://localhost:6333"),
             enabled=qdrant_data.get("enabled", True),
@@ -191,5 +210,26 @@ def _write(cfg: ReplicaConfig, path: Path) -> None:
         ]
         if dev.subscriber_id:
             lines.append(f'subscriber_id = "{dev.subscriber_id}"\n')
+        lines.append("\n")
+    for n in cfg.notifications:
+        lines += ["[[notifications]]\n", f'type = "{n.type}"\n']
+        if n.url:
+            lines.append(f'url = "{n.url}"\n')
+        if n.host:
+            lines.append(f'host = "{n.host}"\n')
+        if n.port != 587:
+            lines.append(f"port = {n.port}\n")
+        if n.username:
+            lines.append(f'username = "{n.username}"\n')
+        if n.password_env:
+            lines.append(f'password_env = "{n.password_env}"\n')
+        if n.from_addr:
+            lines.append(f'from_addr = "{n.from_addr}"\n')
+        if n.to_addrs:
+            addrs = ", ".join(f'"{a}"' for a in n.to_addrs)
+            lines.append(f"to_addrs = [{addrs}]\n")
+        if n.artifact_types:
+            types = ", ".join(f'"{t}"' for t in n.artifact_types)
+            lines.append(f"artifact_types = [{types}]\n")
         lines.append("\n")
     path.write_text("".join(lines), encoding="utf-8")

@@ -43,6 +43,8 @@ def _artifact_text(artifact_type: str, payload) -> str:
                 f"{getattr(payload, 'summary', '')} "
                 f"{getattr(payload, 'rationale', '')}"
             )
+        if artifact_type == "quick_note":
+            return getattr(payload, "message", str(payload))
     except Exception:
         pass
     return str(payload)[:500]
@@ -99,6 +101,12 @@ class GhostDaemon:
                 "Started %d WS client(s) for live_probe subscribers",
                 len(live_probe_subs),
             )
+
+        if self.cfg.schedule.standup or self.cfg.schedule.digest:
+            from ghost_daemon.scheduler import Scheduler
+            scheduler = Scheduler(self.cfg, self)
+            tasks.append(asyncio.create_task(scheduler.run(), name="scheduler"))
+            logger.info("Scheduler task started")
 
         config = uvicorn.Config(
             app=self._app,

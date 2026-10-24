@@ -52,12 +52,23 @@ class SubscriberAgent:
 
         answer = await self._synthesise(query, rows)
 
+        sources_list = [
+            {
+                "developer_id": r.developer_id,
+                "artifact_type": r.artifact_type,
+                "received_at": r.received_at,
+                "approved_at": r.approved_at,
+            }
+            for r in rows
+        ]
+
         return {
             "query": query,
             "retrieval": sources,
             "developer_id": developer_id,
             "answer": answer,
             "sources_used": len(rows),
+            "sources": sources_list,
         }
 
     def run(

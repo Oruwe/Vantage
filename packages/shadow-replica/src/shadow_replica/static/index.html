@@ -629,6 +629,20 @@
   .tr-tool{color:var(--te)}
   .turn-body{font-size:13px;color:var(--tx2);line-height:1.5;white-space:pre-wrap}
   .turn-ts{font-size:10.5px;color:var(--tx3);margin-top:4px}
+
+  /* Activity signals */
+  .probe-act{background:var(--sf2);border:1px solid var(--bd);border-radius:var(--r);padding:14px 16px;margin-bottom:18px}
+  .probe-act-row{display:flex;align-items:baseline;gap:10px;margin-bottom:7px}
+  .probe-act-row:last-child{margin-bottom:0}
+  .pa-lbl{font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;color:var(--tx3);flex-shrink:0;width:66px}
+  .pa-val{font-size:13px;color:var(--tx2);flex:1;min-width:0}
+  .pa-intent{font-size:12.5px;color:var(--tx3);font-style:italic;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .act-badge{font-size:11px;font-weight:600;padding:2px 8px;border-radius:4px;text-transform:uppercase;letter-spacing:.05em;flex-shrink:0}
+  .act-editing  {background:var(--embg);color:var(--em);border:1px solid var(--embd)}
+  .act-debugging{background:var(--ambg);color:var(--am);border:1px solid var(--ambd)}
+  .act-reviewing{background:var(--pbg); color:var(--p2);border:1px solid var(--pbd)}
+  .act-browsing {background:var(--tebg);color:var(--te);border:1px solid var(--tebd)}
+  .act-unknown  {background:var(--sf3); color:var(--tx3);border:1px solid var(--bd)}
 }
 
 /* ══ QUERY PANEL ════════════════════════════════════════════════════════ */
@@ -1187,12 +1201,25 @@ function wnCard(dev,probe){
   const decision=(probe.policy_decision||'').toLowerCase();
   const allowed=decision.includes('allow');
   const snap=allowed&&sn?sn:null;
+  const as=snap?.activity_signals;
   const turns=snap?.last_turns||[];
   const lastTurn=turns[turns.length-1];
   const cwd=snap?.cwd||'';
   const cwdShort=cwd?cwd.split(/[\\/]/).slice(-2).join('/'):'';
   const agentKind=snap?.agent_kind||'';
   const excerpt=lastTurn?.content_excerpt||probe.fallback_summary||'';
+
+  // Prefer activity signals rows over raw turn data
+  const actRow=as?.primary_activity&&as.primary_activity!=='unknown'
+    ?`<div class="wn-row"><span class="wn-row-lbl">Activity</span><span class="wn-row-val plain"><span class="act-badge act-${as.primary_activity}" style="font-size:10px;padding:1px 6px">${h(as.primary_activity)}</span>${as.inferred_branch?` <code style="font-family:var(--mono);font-size:11px;color:var(--te)">${h(as.inferred_branch)}</code>`:''}</span></div>`
+    :'';
+  const filesRow=as?.files_recently_touched?.length
+    ?`<div class="wn-row"><span class="wn-row-lbl">Files</span><span class="wn-row-val plain" style="font-family:var(--mono);font-size:11.5px;color:var(--tx2)">${h(as.files_recently_touched.slice(0,3).join(', '))}</span></div>`
+    :(cwdShort?`<div class="wn-row"><span class="wn-row-lbl">Dir</span><span class="wn-row-val">${h(cwdShort)}</span></div>`:'');
+  const intentRow=as?.last_user_intent
+    ?`<div class="wn-row"><span class="wn-row-lbl">Intent</span><span class="wn-row-val plain" style="color:var(--tx3);font-style:italic">"${h(as.last_user_intent.slice(0,80))}${as.last_user_intent.length>80?'…':''}"</span></div>`
+    :(excerpt?`<div class="wn-row"><span class="wn-row-lbl">Last</span><span class="wn-row-val plain" style="color:var(--tx2)">${h(excerpt.slice(0,80))}${excerpt.length>80?'…':''}</span></div>`:'');
+
   return`<div class="wn-card" id="wn-${h(dev.developer_id)}">
     <div class="wn-top">
       <div class="wn-av">${h(ini(dev.name))}</div>
@@ -1200,9 +1227,9 @@ function wnCard(dev,probe){
     </div>
     <div class="wn-rows">
       ${agentKind?`<div class="wn-row"><span class="wn-row-lbl">Agent</span><span class="wn-row-val plain">${h(agentKind)}</span></div>`:''}
-      ${cwdShort?`<div class="wn-row"><span class="wn-row-lbl">Dir</span><span class="wn-row-val">${h(cwdShort)}</span></div>`:''}
-      ${turns.length?`<div class="wn-row"><span class="wn-row-lbl">Turns</span><span class="wn-row-val plain">${turns.length} recent</span></div>`:''}
-      ${excerpt?`<div class="wn-row"><span class="wn-row-lbl">Last</span><span class="wn-row-val plain" style="color:var(--tx2)">${h(excerpt.slice(0,90))}${excerpt.length>90?'…':''}</span></div>`:''}
+      ${actRow}
+      ${filesRow}
+      ${intentRow}
     </div>
     <div class="wn-footer">
       <button class="wn-prob-btn" onclick="openProbeModal('${h(dev.developer_id)}');event.stopPropagation()">
@@ -1506,6 +1533,19 @@ function buildProbeHtml(p){
   if(p.fallback_summary)html+=sec('Summary',`<div class="a-text">${h(p.fallback_summary)}</div>`);
   const sn=p.snapshot;
   if(sn){
+    const as=sn.activity_signals;
+    if(as&&(as.primary_activity!=='unknown'||as.files_recently_touched?.length||as.last_user_intent)){
+      const act=as.primary_activity||'unknown';
+      const actCls=`act-${act.toLowerCase()}`;
+      const filesHtml=(as.files_recently_touched||[]).slice(0,6).map(f=>`<span class="file-tag">${h(f)}</span>`).join('');
+      const branchHtml=as.inferred_branch?`<code style="font-family:var(--mono);font-size:11.5px;background:var(--bg);padding:2px 7px;border-radius:4px;color:var(--te);margin-left:6px">${h(as.inferred_branch)}</code>`:'';
+      html+=sec('Current Activity',`<div class="probe-act">
+        <div class="probe-act-row"><span class="pa-lbl">Status</span><span class="act-badge ${actCls}">${h(act)}</span>${branchHtml}</div>
+        ${filesHtml?`<div class="probe-act-row"><span class="pa-lbl">Files</span><div class="file-tags pa-val">${filesHtml}</div></div>`:''}
+        ${as.active_repo?`<div class="probe-act-row"><span class="pa-lbl">Repo</span><span class="pa-val" style="font-family:var(--mono);font-size:12px">${h(as.active_repo)}</span></div>`:''}
+        ${as.last_user_intent?`<div class="probe-act-row"><span class="pa-lbl">Intent</span><span class="pa-intent">"${h(as.last_user_intent.slice(0,120))}"</span></div>`:''}
+      </div>`);
+    }
     if(sn.cwd)html+=sec('Working Directory',`<div class="a-code-block"><pre style="margin:0">${h(sn.cwd)}</pre></div>`);
     if(sn.last_turns?.length){
       const turns=sn.last_turns.map((t,i)=>{

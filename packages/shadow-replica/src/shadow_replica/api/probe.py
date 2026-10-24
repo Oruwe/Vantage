@@ -51,9 +51,15 @@ def make_router(hub: "WSHub", store: "ReceivedStore", trusted_devs: list) -> API
             if response is not None:
                 probe_latency.observe(time.monotonic() - t0)
                 probe_requests.labels(developer_id=developer_id, decision=response.policy_decision.value).inc()
+                if response.snapshot and response.snapshot.activity_signals:
+                    hub.cache_activity(
+                        developer_id,
+                        response.snapshot.activity_signals,
+                        response.snapshot.captured_at,
+                    )
                 return JSONResponse(response.model_dump(mode="json"))
 
-        fallback = generate_fallback(store, developer_id)
+        fallback = generate_fallback(store, developer_id, hub=hub)
         fallback.request_id = probe_req.request_id
         probe_requests.labels(developer_id=developer_id, decision="offline").inc()
         logger.info(

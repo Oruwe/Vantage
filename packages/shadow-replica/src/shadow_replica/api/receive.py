@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 
 from shadow_replica.auth.token_verify import verify_request
 from shadow_replica.metrics import artifacts_received
+from shadow_replica.notify.notifier import NotificationConfig, dispatch_all
 from shadow_replica.storage.received_store import ReceivedStore
 
 logger = logging.getLogger(__name__)
@@ -15,7 +16,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def make_router(store: ReceivedStore, trusted_devs: list) -> APIRouter:
+def make_router(
+    store: ReceivedStore,
+    trusted_devs: list,
+    notifications: list[NotificationConfig] | None = None,
+) -> APIRouter:
+    _notifications = notifications or []
     r = APIRouter()
 
     @r.post("/v1/receive")
@@ -38,13 +44,14 @@ def make_router(store: ReceivedStore, trusted_devs: list) -> APIRouter:
         if not approval_id:
             return JSONResponse({"error": "missing approval_id"}, status_code=400)
 
+        payload_json = json.dumps(payload)
         await store.save_async(
             approval_id=approval_id,
             developer_id=dev.developer_id,
             artifact_type=artifact_type,
             draft_id=draft_id,
             channel=channel,
-            payload_json=json.dumps(payload),
+            payload_json=payload_json,
             approved_at=approved_at,
         )
         artifacts_received.labels(developer_id=dev.developer_id, channel=channel).inc()
@@ -55,6 +62,16 @@ def make_router(store: ReceivedStore, trusted_devs: list) -> APIRouter:
             dev.developer_id,
             approval_id,
         )
+
+        if _notifications:
+            await dispatch_all(
+                _notifications,
+                artifact_type=artifact_type,
+                developer_name=dev.name,
+                developer_id=dev.developer_id,
+                payload_json=payload_json,
+            )
+
         return JSONResponse({"status": "ok", "approval_id": approval_id}, status_code=201)
 
     return r

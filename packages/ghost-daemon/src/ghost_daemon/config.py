@@ -49,6 +49,21 @@ class QdrantConfig:
 
 
 @dataclass
+class GithubConfig:
+    token_env: str = "GITHUB_TOKEN"
+    repo: str = ""  # "owner/repo" — auto-detected from git remote if empty
+
+
+@dataclass
+class ScheduleConfig:
+    # Each field is a schedule string or "" (disabled).
+    # Formats: "09:00" (daily), "weekday 09:00" (Mon–Fri),
+    #          "friday 17:00" (specific weekday), "monday 08:30", …
+    standup: str = ""
+    digest: str = ""
+
+
+@dataclass
 class Config:
     developer_id: str
     display_name: str = ""
@@ -60,6 +75,8 @@ class Config:
     ui: UIConfig = field(default_factory=UIConfig)
     audit: AuditConfig = field(default_factory=AuditConfig)
     qdrant: QdrantConfig = field(default_factory=QdrantConfig)
+    github: GithubConfig = field(default_factory=GithubConfig)
+    schedule: ScheduleConfig = field(default_factory=ScheduleConfig)
 
     @property
     def vantage_dir(self) -> Path:
@@ -121,6 +138,8 @@ def load(path: Path | None = None) -> Config:
     audit_data = data.get("audit", {})
 
     qdrant_data = data.get("qdrant", {})
+    github_data = data.get("github", {})
+    schedule_data = data.get("schedule", {})
 
     return Config(
         developer_id=data.get("developer_id", str(uuid.uuid4())),
@@ -150,6 +169,14 @@ def load(path: Path | None = None) -> Config:
         qdrant=QdrantConfig(
             url=qdrant_data.get("url", "http://localhost:6333"),
             enabled=qdrant_data.get("enabled", True),
+        ),
+        github=GithubConfig(
+            token_env=github_data.get("token_env", "GITHUB_TOKEN"),
+            repo=github_data.get("repo", ""),
+        ),
+        schedule=ScheduleConfig(
+            standup=schedule_data.get("standup", ""),
+            digest=schedule_data.get("digest", ""),
         ),
     )
 
@@ -188,6 +215,15 @@ retention_days = 30
 [qdrant]
 url = "http://localhost:6333"
 enabled = true
+
+[github]
+token_env = "GITHUB_TOKEN"
+repo = ""
+
+[schedule]
+# Uncomment and set times (UTC) to enable automatic generation.
+# standup = "weekday 09:00"
+# digest = "friday 17:00"
 """,
         encoding="utf-8",
     )

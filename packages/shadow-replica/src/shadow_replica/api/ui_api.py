@@ -186,9 +186,16 @@ def make_ui_router(
             t0 = time.monotonic()
             response = await hub.probe(developer_id, probe_req)
             if response is not None:
+                # Cache activity signals for offline fallback
+                if response.snapshot and response.snapshot.activity_signals:
+                    hub.cache_activity(
+                        developer_id,
+                        response.snapshot.activity_signals,
+                        response.snapshot.captured_at,
+                    )
                 return JSONResponse(response.model_dump(mode="json"))
 
-        fallback = generate_fallback(store, developer_id)
+        fallback = generate_fallback(store, developer_id, hub=hub)
         fallback.request_id = probe_req.request_id
         return JSONResponse(fallback.model_dump(mode="json"))
 

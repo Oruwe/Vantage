@@ -16,6 +16,7 @@ class Channel(str, Enum):
     STANDUP = "standup"
     PR_DRAFT = "pr_draft"
     LIVE_PROBE = "live_probe"
+    QUICK_NOTE = "quick_note"
 
 
 class RedactionLevel(str, Enum):
@@ -43,12 +44,22 @@ class Turn(BaseModel):
     timestamp: datetime | None = None
 
 
+class ActivitySignals(BaseModel):
+    files_recently_touched: list[str] = Field(default_factory=list)
+    inferred_branch: str = ""
+    active_repo: str = ""
+    last_user_intent: str = ""
+    primary_activity: str = "unknown"  # editing | debugging | reviewing | browsing | unknown
+    session_active_since: datetime | None = None
+
+
 class SessionSnapshot(BaseModel):
     developer_id: str
     agent_kind: str
     session_id: str
     cwd: str
     last_turns: list[Turn]
+    activity_signals: ActivitySignals | None = None
     captured_at: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -115,6 +126,12 @@ class PRDraft(BaseModel):
     rationale: str
     test_notes: str
     risk_notes: str
+
+
+class QuickNote(BaseModel):
+    message: str
+    context: str = ""  # optional freeform context (branch, repo, etc.)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class DraftPayload(BaseModel, Generic[T]):

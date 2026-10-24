@@ -3,12 +3,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from datetime import datetime
 from typing import Any
 
 from fastapi import WebSocket
 
 from shadow_replica.metrics import ws_connections_active
-from vantage.schemas import PolicyDecision, ProbeRequest, ProbeResponse, RedactionLevel
+from vantage.schemas import ActivitySignals, PolicyDecision, ProbeRequest, ProbeResponse, RedactionLevel
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,8 @@ class WSHub:
         self._connections: dict[str, dict[str, WebSocket]] = {}
         self._pending: dict[str, asyncio.Future[ProbeResponse]] = {}
         self._lock = asyncio.Lock()
+        # In-memory cache: developer_id → (ActivitySignals, captured_at)
+        self._activity: dict[str, tuple[ActivitySignals, datetime]] = {}
 
     # ── Connection lifecycle ──────────────────────────────────────────────────
 
@@ -114,6 +117,19 @@ class WSHub:
             return None
         finally:
             self._pending.pop(request.request_id, None)
+
+    # ── Activity cache ────────────────────────────────────────────────────────
+
+    def cache_activity(
+        self,
+        developer_id: str,
+        signals: ActivitySignals,
+        captured_at: datetime,
+    ) -> None:
+        self._activity[developer_id] = (signals, captured_at)
+
+    def last_activity(self, developer_id: str) -> tuple[ActivitySignals, datetime] | None:
+        return self._activity.get(developer_id)
 
     def _pick(self, connections: dict[str, WebSocket], repo_hint: str) -> WebSocket:
         """Pick the best connection for the given repo hint."""

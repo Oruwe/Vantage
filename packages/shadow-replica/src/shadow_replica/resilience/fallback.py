@@ -8,16 +8,45 @@ from typing import TYPE_CHECKING
 from vantage.schemas import PolicyDecision, ProbeResponse, RedactionLevel
 
 if TYPE_CHECKING:
+    from shadow_replica.connections.ws_hub import WSHub
     from shadow_replica.storage.received_store import ReceivedStore
 
 logger = logging.getLogger(__name__)
 
 
-def generate_fallback(store: "ReceivedStore", developer_id: str) -> ProbeResponse:
-    """Return a staleness-stamped ProbeResponse from the most recent received artifact."""
+def generate_fallback(
+    store: "ReceivedStore",
+    developer_id: str,
+    hub: "WSHub | None" = None,
+) -> ProbeResponse:
+    """Return a staleness-stamped ProbeResponse from the most recent received artifact.
+
+    Falls back to cached ActivitySignals from hub when no artifacts have been received yet.
+    """
     recent = store.list_for_developer(developer_id, limit=1)
 
     if not recent:
+        # Try cached activity signals from the last live probe
+        if hub is not None:
+            cached = hub.last_activity(developer_id)
+            if cached is not None:
+                signals, captured_at = cached
+                try:
+                    # Both sides use naive UTC (datetime.utcnow())
+                    staleness = int((datetime.utcnow() - captured_at.replace(tzinfo=None)).total_seconds())
+                    staleness = max(0, staleness)
+                except Exception:
+                    staleness = 0
+                summary = _summarise_signals(signals, staleness)
+                return ProbeResponse(
+                    request_id="",
+                    developer_id=developer_id,
+                    policy_decision=PolicyDecision.OFFLINE,
+                    fallback_summary=summary,
+                    staleness_seconds=staleness,
+                    redaction_level_applied=RedactionLevel.STANDARD,
+                )
+
         return ProbeResponse(
             request_id="",
             developer_id=developer_id,
@@ -44,6 +73,37 @@ def generate_fallback(store: "ReceivedStore", developer_id: str) -> ProbeRespons
         staleness_seconds=staleness,
         redaction_level_applied=RedactionLevel.STANDARD,
     )
+
+
+def _summarise_signals(signals, staleness: int) -> str:
+    parts: list[str] = []
+
+    if signals.primary_activity and signals.primary_activity != "unknown":
+        parts.append(signals.primary_activity)
+
+    if signals.files_recently_touched:
+        files = ", ".join(signals.files_recently_touched[:3])
+        parts.append(f"{files}")
+
+    if signals.inferred_branch:
+        parts.append(f"on {signals.inferred_branch}")
+
+    if signals.active_repo:
+        parts.append(f"in {signals.active_repo}")
+
+    if not parts:
+        if signals.last_user_intent:
+            return f"Last seen: \"{signals.last_user_intent[:100]}\""
+        return "Last seen active (no commit data yet)."
+
+    age = ""
+    if staleness > 0:
+        if staleness < 3600:
+            age = f" — {staleness // 60}m ago"
+        else:
+            age = f" — {staleness // 3600}h ago"
+
+    return f"Last seen: {' '.join(parts)}{age}"
 
 
 def _summarise_artifact(row) -> str:

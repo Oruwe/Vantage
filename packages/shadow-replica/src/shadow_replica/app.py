@@ -95,7 +95,7 @@ def build_app(cfg: ReplicaConfig) -> FastAPI:
 
     app = FastAPI(title="Vantage Shadow Replica", docs_url="/docs", redoc_url=None)
 
-    app.include_router(make_receive_router(store, cfg.trusted_devs))
+    app.include_router(make_receive_router(store, cfg.trusted_devs, notifications=cfg.notifications))
     app.include_router(make_timeline_router(store, cfg.trusted_devs))
     app.include_router(make_probe_router(hub, store, cfg.trusted_devs))
     app.include_router(make_dashboard_router(store, cfg.trusted_devs))

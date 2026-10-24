@@ -9,6 +9,7 @@ from vantage.schemas import (
     Channel, PolicyDecision, ProbeRequest, ProbeResponse, RedactionLevel,
     SessionSnapshot, Turn,
 )
+from ghost_daemon.agents.activity_extractor import extract_activity_signals
 from ghost_daemon.approval.policy import load_policy
 from ghost_daemon.config import Config
 from ghost_daemon.models.registry import LLMProvider
@@ -124,10 +125,13 @@ class ProbeAgent:
                 timestamp=t.timestamp,
             ))
 
+        cwd = str(Path.cwd())
+        signals = extract_activity_signals(scrubbed, cwd=cwd)
         return SessionSnapshot(
             developer_id=self._cfg.developer_id,
             agent_kind="claude_code",
             session_id=str(uuid4()),
-            cwd=str(Path.cwd()),
+            cwd=cwd,
             last_turns=scrubbed,
+            activity_signals=signals,
         )

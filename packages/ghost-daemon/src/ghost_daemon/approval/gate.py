@@ -6,7 +6,8 @@ from datetime import datetime
 from typing import Any
 
 from vantage.schemas import (
-    ApprovalSource, ApprovedPayload, CommitReport, DraftPayload, PRDraft, StandupBullets, WeeklyDigest,
+    ApprovalSource, ApprovedPayload, CommitReport, DraftPayload, PRDraft,
+    QuickNote, StandupBullets, WeeklyDigest,
 )
 from ghost_daemon.storage.sqlite_store import SQLiteStore
 
@@ -122,4 +123,6 @@ def _deserialise(artifact_type: str, data: dict) -> Any:
         return StandupBullets(**data)
     if artifact_type == "pr_draft":
         return PRDraft(**data)
+    if artifact_type == "quick_note":
+        return QuickNote(**data)
     return data
