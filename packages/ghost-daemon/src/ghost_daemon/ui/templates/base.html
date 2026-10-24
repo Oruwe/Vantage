@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Vantage — {% block title %}{% endblock %}</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, -apple-system, sans-serif; background: #0f0f11; color: #e2e2e5; min-height: 100vh; }
+  a { color: #a78bfa; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  nav { background: #18181b; border-bottom: 1px solid #27272a; padding: 0.75rem 1.5rem; display: flex; gap: 1.5rem; align-items: center; }
+  nav .brand { font-weight: 700; color: #a78bfa; font-size: 1.1rem; }
+  main { max-width: 900px; margin: 2rem auto; padding: 0 1.5rem; }
+  h1 { font-size: 1.4rem; margin-bottom: 1.25rem; color: #f4f4f5; }
+  h2 { font-size: 1.1rem; margin-bottom: 0.75rem; color: #d4d4d8; }
+  .card { background: #18181b; border: 1px solid #27272a; border-radius: 8px; padding: 1.25rem; margin-bottom: 1rem; }
+  .badge { display: inline-block; font-size: 0.7rem; padding: 0.15rem 0.5rem; border-radius: 99px; font-weight: 600; letter-spacing: 0.04em; }
+  .badge-pending { background: #854d0e; color: #fef08a; }
+  .badge-approved { background: #14532d; color: #86efac; }
+  .badge-rejected { background: #450a0a; color: #fca5a5; }
+  .meta { font-size: 0.8rem; color: #71717a; margin-top: 0.25rem; }
+  textarea { width: 100%; min-height: 320px; background: #09090b; color: #e2e2e5; border: 1px solid #3f3f46; border-radius: 6px; padding: 0.75rem; font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 0.85rem; resize: vertical; }
+  button { cursor: pointer; border: none; border-radius: 6px; padding: 0.5rem 1.2rem; font-size: 0.9rem; font-weight: 600; transition: opacity 0.15s; }
+  button:hover { opacity: 0.85; }
+  .btn-approve { background: #16a34a; color: #fff; }
+  .btn-reject  { background: #dc2626; color: #fff; }
+  .btn-secondary { background: #3f3f46; color: #e4e4e7; }
+  .actions { display: flex; gap: 0.75rem; margin-top: 1rem; }
+  .empty { color: #52525b; text-align: center; padding: 3rem 0; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  th { text-align: left; color: #71717a; font-weight: 600; padding: 0.5rem 0.75rem; border-bottom: 1px solid #27272a; }
+  td { padding: 0.5rem 0.75rem; border-bottom: 1px solid #1c1c1f; vertical-align: top; }
+  td.redaction { font-family: monospace; font-size: 0.78rem; color: #f59e0b; }
+  pre { background: #09090b; border: 1px solid #27272a; border-radius: 6px; padding: 1rem; overflow-x: auto; font-size: 0.82rem; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<nav>
+  <span class="brand">⬡ Vantage</span>
+  <a href="/">Drafts</a>
+  <a href="/subscribers">Subscribers</a>
+  <a href="/audit">Audit</a>
+</nav>
+<main>
+  {% block content %}{% endblock %}
+</main>
+</body>
+</html>

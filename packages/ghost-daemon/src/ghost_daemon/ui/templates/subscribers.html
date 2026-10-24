@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Subscribers{% endblock %}
+{% block content %}
+<h1>Subscribers</h1>
+<p class="meta" style="margin-bottom:1.5rem;">
+  Subscribers receive approved artifacts you choose to share. Add one with
+  <code>vantage-ghost subscribers add</code>.
+</p>
+
+{% if subscribers %}
+  <table>
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>ID</th>
+        <th>Channels</th>
+        <th>Receive URL</th>
+        <th>Status</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for sub in subscribers %}
+      <tr>
+        <td><strong>{{ sub.name }}</strong></td>
+        <td style="font-family:monospace;font-size:0.78rem;color:#a1a1aa;">{{ sub.subscriber_id }}</td>
+        <td>
+          {% for ch in sub.channels %}
+          <span class="badge badge-pending" style="margin-right:0.25rem;">{{ ch.value | replace('_', ' ') }}</span>
+          {% endfor %}
+        </td>
+        <td style="font-size:0.8rem;color:#a1a1aa;">{{ sub.receive_url }}</td>
+        <td>
+          {% if sub.is_active %}
+          <span class="badge badge-approved">active</span>
+          {% else %}
+          <span class="badge badge-rejected">revoked</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if sub.is_active %}
+          <form method="post" action="/subscribers/{{ sub.subscriber_id }}/revoke"
+                onsubmit="return confirm('Revoke {{ sub.name }}? Future pushes will be skipped.')">
+            <button type="submit" class="btn-reject" style="font-size:0.78rem;padding:0.3rem 0.75rem;">Revoke</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% else %}
+  <div class="empty">
+    No subscribers yet.<br>
+    <code style="font-size:0.85rem;color:#a78bfa;">vantage-ghost subscribers add &lt;name&gt; --receive-url http://server:7475 --channels weekly_digest</code>
+  </div>
+{% endif %}
+{% endblock %}

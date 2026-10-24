@@ -1,0 +1,39 @@
+[project]
+name = "ghost-daemon"
+version = "0.1.0"
+description = "Vantage ghost daemon — developer-first engineering journal"
+readme = "README.md"
+authors = [
+    { name = "Triven", email = "triven0369@gmail.com" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "vantage",
+    "pydantic>=2.14.1",
+    "anthropic>=0.54.0",
+    "langchain-anthropic>=1.7.6",
+    "langchain-core>=0.3.0",
+    "langgraph>=1.2.17",
+    "qdrant-client>=1.20.0",
+    "sqlmodel>=0.0.22",
+    "fastapi>=0.162.0",
+    "uvicorn[standard]>=0.54.0",
+    "httpx>=0.28.0",
+    "watchfiles>=1.0.0",
+    "typer>=0.16.0",
+    "jinja2>=3.1.0",
+    "python-multipart>=0.0.20",
+    "keyring>=25.0.0",
+    "openai>=1.0.0",
+]
+
+[project.scripts]
+vantage-ghost = "ghost_daemon.__main__:main"
+vantage = "ghost_daemon.__main__:main"
+
+[tool.uv.sources]
+vantage = { workspace = true }
+
+[build-system]
+requires = ["uv_build>=0.12.19,<0.13.0"]
+build-backend = "uv_build"

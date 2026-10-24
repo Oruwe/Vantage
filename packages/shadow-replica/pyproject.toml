@@ -1,0 +1,28 @@
+[project]
+name = "shadow-replica"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Triven", email = "triven0369@gmail.com" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "vantage",
+    "fastapi>=0.162.0",
+    "pydantic>=2.14.1",
+    "sqlmodel>=0.0.22",
+    "uvicorn[standard]>=0.54.0",
+    "typer>=0.16.0",
+    "python-multipart>=0.0.20",
+]
+
+[tool.uv.sources]
+vantage = { workspace = true }
+
+[project.scripts]
+shadow-replica = "shadow_replica.__main__:main"
+
+[build-system]
+requires = ["uv_build>=0.12.19,<0.13.0"]
+build-backend = "uv_build"

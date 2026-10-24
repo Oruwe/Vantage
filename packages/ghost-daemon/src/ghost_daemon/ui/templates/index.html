@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Pending Drafts{% endblock %}
+{% block content %}
+<h1>Pending Drafts</h1>
+{% if drafts %}
+  {% for d in drafts %}
+  <div class="card">
+    <div style="display:flex; justify-content:space-between; align-items:center;">
+      <div>
+        <span class="badge badge-pending">{{ d.artifact_type | replace('_', ' ') | title }}</span>
+        <span class="meta" style="margin-left:0.5rem;">{{ d.period_start[:10] }} → {{ d.period_end[:10] }}</span>
+      </div>
+      <div style="font-size:0.78rem; color:#52525b;">{{ d.created_at[:16] }}</div>
+    </div>
+    <div class="actions" style="margin-top:0.75rem;">
+      <a href="/draft/{{ d.draft_id }}"><button class="btn-secondary">Review &amp; Edit</button></a>
+      <form method="post" action="/draft/{{ d.draft_id }}/approve" style="display:inline;">
+        <input type="hidden" name="edited_json" value="">
+        <button type="submit" class="btn-approve">Quick Approve</button>
+      </form>
+      <form method="post" action="/draft/{{ d.draft_id }}/reject" style="display:inline;">
+        <button type="submit" class="btn-reject">Reject</button>
+      </form>
+    </div>
+  </div>
+  {% endfor %}
+{% else %}
+  <div class="empty">No pending drafts. Run <code>vantage-ghost digest</code> to generate one.</div>
+{% endif %}
+{% endblock %}
