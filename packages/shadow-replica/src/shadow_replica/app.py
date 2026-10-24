@@ -3,19 +3,23 @@ from __future__ import annotations
 import logging
 
 import json
+from pathlib import Path
 
 from fastapi import FastAPI, Request, WebSocket
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 
 from shadow_replica.agent.subscriber_agent import SubscriberAgent
 from shadow_replica.api.dashboard import make_router as make_dashboard_router
 from shadow_replica.api.probe import make_router as make_probe_router
 from shadow_replica.api.receive import make_router as make_receive_router
 from shadow_replica.api.timeline import make_router as make_timeline_router
+from shadow_replica.api.ui_api import make_ui_router
 from shadow_replica.auth.token_verify import verify_request
 from shadow_replica.config import ReplicaConfig
 from shadow_replica.connections.ws_hub import WSHub
 from shadow_replica.storage.received_store import ReceivedStore
+
+_STATIC_DIR = Path(__file__).parent / "static"
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +35,11 @@ def build_app(cfg: ReplicaConfig) -> FastAPI:
     app.include_router(make_timeline_router(store, cfg.trusted_devs))
     app.include_router(make_probe_router(hub, store, cfg.trusted_devs))
     app.include_router(make_dashboard_router(store, cfg.trusted_devs))
+    app.include_router(make_ui_router(store, hub, cfg))
+
+    @app.get("/", include_in_schema=False)
+    async def serve_dashboard():
+        return FileResponse(_STATIC_DIR / "index.html")
 
     @app.get("/health")
     async def health():

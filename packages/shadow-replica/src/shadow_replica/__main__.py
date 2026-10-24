@@ -24,7 +24,12 @@ def serve(
     cfg.bind_host = host
     cfg.bind_port = port
 
+    display_host = "localhost" if host in ("0.0.0.0", "127.0.0.1") else host
     typer.echo(f"Shadow replica starting on http://{host}:{port}")
+    typer.echo(f"")
+    typer.echo(f"  Manager dashboard : http://{display_host}:{port}/")
+    typer.echo(f"  Manager token     : {cfg.manager_token}")
+    typer.echo(f"")
     typer.echo(f"Trusted devs: {len(cfg.trusted_devs)}")
     for dev in cfg.trusted_devs:
         typer.echo(f"  • {dev.name} ({dev.developer_id})")

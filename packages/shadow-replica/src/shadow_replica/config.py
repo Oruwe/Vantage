@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import secrets
 import sys
 import tomllib
 import uuid
@@ -28,6 +29,7 @@ class ReplicaConfig:
     replica_id: str
     bind_host: str = "0.0.0.0"
     bind_port: int = 7475
+    manager_token: str = ""
     trusted_devs: list[TrustedDev] = field(default_factory=list)
 
     @property
@@ -42,7 +44,10 @@ class ReplicaConfig:
 def load(path: Path | None = None) -> ReplicaConfig:
     config_path = path or (_replica_config_dir() / "replica.toml")
     if not config_path.exists():
-        return ReplicaConfig(replica_id=str(uuid.uuid4()))
+        return ReplicaConfig(
+            replica_id=str(uuid.uuid4()),
+            manager_token="vsm_" + secrets.token_urlsafe(24),
+        )
 
     with open(config_path, "rb") as f:
         data = tomllib.load(f)
@@ -57,12 +62,22 @@ def load(path: Path | None = None) -> ReplicaConfig:
         for d in data.get("trusted_devs", [])
     ]
 
-    return ReplicaConfig(
+    manager_token = data.get("manager_token", "")
+    generated = False
+    if not manager_token:
+        manager_token = "vsm_" + secrets.token_urlsafe(24)
+        generated = True
+
+    cfg = ReplicaConfig(
         replica_id=data.get("replica_id", str(uuid.uuid4())),
         bind_host=data.get("bind_host", "0.0.0.0"),
         bind_port=data.get("bind_port", 7475),
+        manager_token=manager_token,
         trusted_devs=trusted_devs,
     )
+    if generated:
+        _write(cfg, config_path)
+    return cfg
 
 
 def add_trusted_dev(
@@ -103,6 +118,7 @@ def _write(cfg: ReplicaConfig, path: Path) -> None:
         f'replica_id = "{cfg.replica_id}"\n',
         f'bind_host = "{cfg.bind_host}"\n',
         f"bind_port = {cfg.bind_port}\n",
+        f'manager_token = "{cfg.manager_token}"\n',
         "\n",
     ]
     for dev in cfg.trusted_devs:

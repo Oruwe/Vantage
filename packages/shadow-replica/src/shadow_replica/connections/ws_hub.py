@@ -81,6 +81,9 @@ class WSHub:
     def is_online(self, developer_id: str) -> bool:
         return bool(self._connections.get(developer_id))
 
+    def online_developer_ids(self) -> list[str]:
+        return list(self._connections.keys())
+
     async def probe(
         self,
         developer_id: str,
