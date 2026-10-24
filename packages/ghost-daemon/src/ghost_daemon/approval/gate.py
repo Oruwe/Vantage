@@ -5,7 +5,9 @@ import logging
 from datetime import datetime
 from typing import Any
 
-from vantage.schemas import ApprovalSource, ApprovedPayload, DraftPayload, WeeklyDigest
+from vantage.schemas import (
+    ApprovalSource, ApprovedPayload, CommitReport, DraftPayload, PRDraft, StandupBullets, WeeklyDigest,
+)
 from ghost_daemon.storage.sqlite_store import SQLiteStore
 
 logger = logging.getLogger(__name__)
@@ -92,19 +94,32 @@ class ApprovalGate:
 
     def list_pending(self) -> list[dict]:
         rows = self._store.list_pending()
-        return [
-            {
-                "draft_id": r.id,
-                "artifact_type": r.artifact_type,
-                "created_at": r.created_at,
-                "period_start": r.period_start,
-                "period_end": r.period_end,
-            }
-            for r in rows
-        ]
+        return [_row_to_dict(r) for r in rows]
+
+    def list_recent(self, limit: int = 20) -> list[dict]:
+        rows = self._store.list_recent(limit)
+        return [_row_to_dict(r) for r in rows]
+
+
+def _row_to_dict(r) -> dict:
+    return {
+        "draft_id": r.id,
+        "artifact_type": r.artifact_type,
+        "created_at": r.created_at,
+        "period_start": r.period_start,
+        "period_end": r.period_end,
+        "status": r.status,
+        "reviewed_at": r.reviewed_at,
+    }
 
 
 def _deserialise(artifact_type: str, data: dict) -> Any:
     if artifact_type == "weekly_digest":
         return WeeklyDigest(**data)
+    if artifact_type == "commit_report":
+        return CommitReport(**data)
+    if artifact_type == "standup":
+        return StandupBullets(**data)
+    if artifact_type == "pr_draft":
+        return PRDraft(**data)
     return data

@@ -124,17 +124,8 @@ def review(
     url = f"http://{cfg.ui.bind_address}:{cfg.ui.port}/"
     typer.echo(f"Review UI: {url}")
     if open_ui:
-        import uvicorn as _uvicorn
         daemon = GhostDaemon(cfg)
-        uv_cfg = _uvicorn.Config(app=daemon.get_app(), host=cfg.ui.bind_address, port=cfg.ui.port, log_level="warning")
-        server = _uvicorn.Server(uv_cfg)
-
-        async def _serve():
-            webbrowser.open(url)
-            await server.serve()
-
-        typer.echo("Review UI running — press Ctrl+C to stop.")
-        asyncio.run(_serve())
+        _open_or_start_ui(url, cfg, daemon)
 
 
 @app.command()
@@ -148,17 +139,8 @@ def audit(
     cfg = _cfg_mod.load()
     url = f"http://{cfg.ui.bind_address}:{cfg.ui.port}/audit?days={days}"
     typer.echo(f"Audit dashboard: {url}")
-    import uvicorn as _uvicorn
     daemon = GhostDaemon(cfg)
-    uv_cfg = _uvicorn.Config(app=daemon.get_app(), host=cfg.ui.bind_address, port=cfg.ui.port, log_level="warning")
-    server = _uvicorn.Server(uv_cfg)
-
-    async def _serve():
-        webbrowser.open(url)
-        await server.serve()
-
-    typer.echo("Audit UI running — press Ctrl+C to stop.")
-    asyncio.run(_serve())
+    _open_or_start_ui(url, cfg, daemon)
 
 
 @app.command("key-check")
@@ -463,6 +445,162 @@ def policy_edit(
     subprocess.call([editor, str(policy_path)])
 
 
+@app.command("commit-report")
+def commit_report(
+    repo: Annotated[str, typer.Option("--repo", "-r", help="Path to the git repo (default: cwd)")] = "",
+    sha: Annotated[str, typer.Option("--sha", help="Commit SHA (default: HEAD)")] = "",
+    open_ui: Annotated[bool, typer.Option("--open/--no-open")] = False,
+):
+    """Generate a commit report draft from the latest (or specified) commit."""
+    from ghost_daemon import config as _cfg_mod
+    from ghost_daemon.logging_setup import setup_logging
+    from ghost_daemon.daemon import GhostDaemon
+    from ghost_daemon.agents.commit_agent import CommitAgent
+    import os
+
+    cfg = _cfg_mod.load()
+    setup_logging(cfg.log_dir, cfg.log_level)
+    daemon = GhostDaemon(cfg)
+
+    repo_path = Path(repo).resolve() if repo else Path(os.getcwd())
+    agent = CommitAgent(cfg, daemon.llm, daemon.tailer)
+
+    async def _run():
+        draft = await agent.run(repo_path, commit_sha=sha or None)
+        return daemon.gate.submit(draft)
+
+    draft_id = asyncio.run(_run())
+    url = f"http://{cfg.ui.bind_address}:{cfg.ui.port}/draft/{draft_id}"
+    typer.echo(f"Commit report draft ready: {url}")
+
+    if open_ui:
+        _open_or_start_ui(url, cfg, daemon)
+
+
+@app.command("pr-draft")
+def pr_draft(
+    repo: Annotated[str, typer.Option("--repo", "-r", help="Path to the git repo (default: cwd)")] = "",
+    base: Annotated[str, typer.Option("--base", "-b", help="Base branch to diff against")] = "main",
+    open_ui: Annotated[bool, typer.Option("--open/--no-open")] = True,
+):
+    """Generate a PR description draft from the current branch's history."""
+    from ghost_daemon import config as _cfg_mod
+    from ghost_daemon.logging_setup import setup_logging
+    from ghost_daemon.daemon import GhostDaemon
+    from ghost_daemon.agents.pr_agent import PRAgent
+    import os
+
+    cfg = _cfg_mod.load()
+    setup_logging(cfg.log_dir, cfg.log_level)
+    daemon = GhostDaemon(cfg)
+
+    repo_path = Path(repo).resolve() if repo else Path(os.getcwd())
+    agent = PRAgent(cfg, daemon.llm, daemon.tailer)
+
+    async def _run():
+        draft = await agent.run(repo_path, base_branch=base)
+        return daemon.gate.submit(draft)
+
+    typer.echo(f"Generating PR draft for current branch → {base} …")
+    draft_id = asyncio.run(_run())
+    url = f"http://{cfg.ui.bind_address}:{cfg.ui.port}/draft/{draft_id}"
+    typer.echo(f"Draft ready: {url}")
+
+    if open_ui:
+        _open_or_start_ui(url, cfg, daemon)
+
+
+@app.command("standup")
+def standup(
+    since: Annotated[str, typer.Option(help="Period start (default: yesterday)")] = "yesterday",
+    open_ui: Annotated[bool, typer.Option("--open/--no-open")] = True,
+):
+    """Generate standup bullet points from yesterday's session activity."""
+    from ghost_daemon import config as _cfg_mod
+    from ghost_daemon.logging_setup import setup_logging
+    from ghost_daemon.daemon import GhostDaemon
+    from ghost_daemon.agents.standup_agent import StandupAgent
+
+    cfg = _cfg_mod.load()
+    setup_logging(cfg.log_dir, cfg.log_level)
+    daemon = GhostDaemon(cfg)
+
+    since_dt = _parse_since(since)
+    agent = StandupAgent(cfg, daemon.llm, daemon.project_map, daemon.tailer)
+
+    async def _run():
+        draft = await agent.run(since=since_dt)
+        return daemon.gate.submit(draft)
+
+    typer.echo("Generating standup bullets …")
+    draft_id = asyncio.run(_run())
+    url = f"http://{cfg.ui.bind_address}:{cfg.ui.port}/draft/{draft_id}"
+    typer.echo(f"Draft ready: {url}")
+
+    if open_ui:
+        _open_or_start_ui(url, cfg, daemon)
+
+
+hook_app = typer.Typer(help="Manage the Vantage git post-commit hook.")
+app.add_typer(hook_app, name="hook")
+
+
+@hook_app.command("install")
+def hook_install(
+    repo: Annotated[str, typer.Argument(help="Path to git repo (default: cwd)")] = "",
+):
+    """Install the Vantage post-commit hook in a git repository."""
+    from ghost_daemon.watchers.git_hook import install, is_installed
+    import os
+
+    repo_path = Path(repo).resolve() if repo else Path(os.getcwd())
+    if not (repo_path / ".git").exists():
+        typer.echo(f"Not a git repository: {repo_path}", err=True)
+        raise typer.Exit(1)
+
+    if is_installed(repo_path):
+        typer.echo(f"Hook already installed in {repo_path / '.git' / 'hooks' / 'post-commit'}")
+        return
+
+    hook_path = install(repo_path)
+    typer.echo(f"Hook installed: {hook_path}")
+    typer.echo("After each git commit, a draft commit report will be enqueued in 'vantage-ghost review'.")
+
+
+@hook_app.command("status")
+def hook_status(
+    repo: Annotated[str, typer.Argument(help="Path to git repo (default: cwd)")] = "",
+):
+    """Check whether the Vantage post-commit hook is installed."""
+    from ghost_daemon.watchers.git_hook import is_installed
+    import os
+
+    repo_path = Path(repo).resolve() if repo else Path(os.getcwd())
+    installed = is_installed(repo_path)
+    status = "installed" if installed else "not installed"
+    typer.echo(f"Vantage post-commit hook: {status} ({repo_path})")
+
+
+@hook_app.command("uninstall")
+def hook_uninstall(
+    repo: Annotated[str, typer.Argument(help="Path to git repo (default: cwd)")] = "",
+):
+    """Remove the Vantage post-commit hook from a git repository."""
+    from ghost_daemon.watchers.git_hook import is_installed
+    import os
+
+    repo_path = Path(repo).resolve() if repo else Path(os.getcwd())
+    hook_path = repo_path / ".git" / "hooks" / "post-commit"
+    if not hook_path.exists():
+        typer.echo("No post-commit hook found.")
+        return
+    if not is_installed(repo_path):
+        typer.echo("The existing post-commit hook was not installed by Vantage — leaving it untouched.")
+        return
+    hook_path.unlink()
+    typer.echo(f"Vantage post-commit hook removed from {hook_path}")
+
+
 @app.command("init")
 def init_config():
     """Create a default config file at ~/.vantage/config.toml."""
@@ -476,6 +614,29 @@ def init_config():
 # ──────────────────────────────────────────────────────────────────────────────
 # Internal helpers
 # ──────────────────────────────────────────────────────────────────────────────
+
+def _open_or_start_ui(url: str, cfg, daemon) -> None:
+    """Open the browser; start the UI server only if it isn't already listening."""
+    import socket
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(0.3)
+    already_running = sock.connect_ex((cfg.ui.bind_address, cfg.ui.port)) == 0
+    sock.close()
+
+    webbrowser.open(url)
+
+    if not already_running:
+        import uvicorn as _uvicorn
+        uv_cfg = _uvicorn.Config(
+            app=daemon.get_app(),
+            host=cfg.ui.bind_address,
+            port=cfg.ui.port,
+            log_level="warning",
+        )
+        server = _uvicorn.Server(uv_cfg)
+        typer.echo("Review UI running — press Ctrl+C to stop.")
+        asyncio.run(server.serve())
+
 
 def _ensure_ui_running(cfg) -> None:
     """Start the UI server in the background if it isn't responding already."""

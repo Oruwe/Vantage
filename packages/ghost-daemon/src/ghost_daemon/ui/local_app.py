@@ -59,7 +59,8 @@ def build_app(
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request):
         pending = gate.list_pending()
-        return HTMLResponse(_render("index.html", request=request, drafts=pending))
+        recent = gate.list_recent(limit=10)
+        return HTMLResponse(_render("index.html", request=request, drafts=pending, recent=recent))
 
     @app.get("/draft/{draft_id}", response_class=HTMLResponse)
     async def view_draft(request: Request, draft_id: str):

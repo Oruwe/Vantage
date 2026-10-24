@@ -8,7 +8,7 @@
     <div style="display:flex; justify-content:space-between; align-items:center;">
       <div>
         <span class="badge badge-pending">{{ d.artifact_type | replace('_', ' ') | title }}</span>
-        <span class="meta" style="margin-left:0.5rem;">{{ d.period_start[:10] }} → {{ d.period_end[:10] }}</span>
+        <span class="meta" style="margin-left:0.5rem;">{{ d.period_start[:10] }}</span>
       </div>
       <div style="font-size:0.78rem; color:#52525b;">{{ d.created_at[:16] }}</div>
     </div>
@@ -25,6 +25,25 @@
   </div>
   {% endfor %}
 {% else %}
-  <div class="empty">No pending drafts. Run <code>vantage-ghost digest</code> to generate one.</div>
+  <div class="empty">No pending drafts. Run <code>vantage-ghost digest</code>, <code>vantage-ghost standup</code>, or <code>vantage-ghost pr-draft</code> to generate one.</div>
+{% endif %}
+
+{% if recent %}
+<h2 style="margin-top:2rem; font-size:1rem; color:#71717a; font-weight:500;">Recent</h2>
+{% for d in recent %}
+<div class="card" style="opacity:0.75;">
+  <div style="display:flex; justify-content:space-between; align-items:center;">
+    <div>
+      <span class="badge badge-{{ d.status }}">{{ d.status | title }}</span>
+      <span style="margin-left:0.5rem; font-size:0.9rem;">{{ d.artifact_type | replace('_', ' ') | title }}</span>
+      <span class="meta" style="margin-left:0.5rem;">{{ d.period_start[:10] }}</span>
+    </div>
+    <div style="font-size:0.78rem; color:#52525b;">{{ (d.reviewed_at or d.created_at)[:16] }}</div>
+  </div>
+  <div style="margin-top:0.5rem;">
+    <a href="/draft/{{ d.draft_id }}"><button class="btn-secondary" style="font-size:0.8rem; padding:0.25rem 0.75rem;">View</button></a>
+  </div>
+</div>
+{% endfor %}
 {% endif %}
 {% endblock %}

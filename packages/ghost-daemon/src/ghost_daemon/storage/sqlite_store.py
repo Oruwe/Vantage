@@ -72,6 +72,14 @@ class SQLiteStore:
             session.add(row)
             session.commit()
 
+    def list_recent(self, limit: int = 20) -> list[DigestDraftRow]:
+        with Session(self._engine) as session:
+            return list(session.exec(
+                select(DigestDraftRow)
+                .where(DigestDraftRow.status != "pending")
+                .order_by(DigestDraftRow.created_at.desc())  # type: ignore[attr-defined]
+            ).fetchmany(limit))
+
     def reject(self, draft_id: str) -> None:
         with Session(self._engine) as session:
             row = session.get(DigestDraftRow, draft_id)
