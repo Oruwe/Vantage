@@ -1,0 +1,54 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: write   # create GitHub Release
+  id-token: write   # Sigstore OIDC + PyPI trusted publishing
+
+jobs:
+  build-sign-publish:
+    runs-on: ubuntu-latest
+    environment: pypi   # configure trusted publisher on pypi.org to match this env name
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install dependencies
+        run: uv sync --all-packages
+
+      - name: Run tests
+        run: uv sync --group dev; uv run pytest tests/ -v --tb=short
+
+      - name: Build packages
+        run: |
+          uv build --package vantage --out-dir dist/
+          uv build --package ghost-daemon --out-dir dist/
+          uv build --package shadow-replica --out-dir dist/
+
+      - name: Sign with Sigstore
+        uses: sigstore/gh-action-sigstore-python@v3
+        with:
+          inputs: >-
+            dist/*.whl
+            dist/*.tar.gz
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+          skip-existing: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true

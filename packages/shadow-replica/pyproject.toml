@@ -1,12 +1,21 @@
 [project]
 name = "shadow-replica"
 version = "0.1.0"
-description = "Add your description here"
+description = "Vantage shadow replica — subscriber service for receiving approved developer artifacts"
 readme = "README.md"
+license = { text = "MIT" }
 authors = [
     { name = "Triven", email = "triven0369@gmail.com" }
 ]
 requires-python = ">=3.14"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+]
 dependencies = [
     "vantage",
     "fastapi>=0.162.0",

@@ -3,10 +3,19 @@ name = "ghost-daemon"
 version = "0.1.0"
 description = "Vantage ghost daemon — developer-first engineering journal"
 readme = "README.md"
+license = { text = "MIT" }
 authors = [
     { name = "Triven", email = "triven0369@gmail.com" }
 ]
 requires-python = ">=3.14"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+]
 dependencies = [
     "vantage",
     "pydantic>=2.14.1",

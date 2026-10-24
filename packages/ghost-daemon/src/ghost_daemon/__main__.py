@@ -856,6 +856,43 @@ def _service_uninstall_launchd() -> None:
         typer.echo("launchd plist not found — nothing to remove.")
 
 
+@app.command("update-check")
+def update_check():
+    """Check PyPI for a newer version of vantage-ghost."""
+    from importlib.metadata import version as _pkg_version, PackageNotFoundError
+
+    try:
+        current = _pkg_version("ghost-daemon")
+    except PackageNotFoundError:
+        current = None
+
+    try:
+        import httpx
+        resp = httpx.get("https://pypi.org/pypi/ghost-daemon/json", timeout=5.0)
+        resp.raise_for_status()
+        latest = resp.json()["info"]["version"]
+    except Exception as exc:
+        typer.echo(f"Could not reach PyPI: {exc}", err=True)
+        return
+
+    if current is None:
+        typer.echo(f"Latest release: v{latest}")
+        typer.echo("(Running from source — installed version unknown)")
+        return
+
+    def _ver(v: str) -> tuple:
+        try:
+            return tuple(int(x) for x in v.split("."))
+        except ValueError:
+            return (0,)
+
+    if _ver(latest) > _ver(current):
+        typer.echo(f"Update available: v{current} → v{latest}")
+        typer.echo("Run: pip install --upgrade ghost-daemon")
+    else:
+        typer.echo(f"vantage-ghost is up to date (v{current})")
+
+
 @app.command("init")
 def init_config():
     """Create a default config file at ~/.vantage/config.toml."""

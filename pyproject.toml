@@ -1,7 +1,7 @@
 [project]
 name = "vantage"
 version = "0.1.0"
-description = "Add your description here"
+description = "Vantage — developer-first engineering journal with opt-in manager visibility"
 readme = "README.md"
 authors = [
     { name = "Triven", email = "triven0369@gmail.com" }
@@ -26,3 +26,19 @@ members = [
     "packages/shadow-replica",
     "packages/employer-voice",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "ruff>=0.9.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E9", "F401", "F811", "F821"]
