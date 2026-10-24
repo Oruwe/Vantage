@@ -14,10 +14,12 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from ghost_daemon.approval.gate import ApprovalGate
 from ghost_daemon.audit.log import AuditLog
 from ghost_daemon.storage.sqlite_store import SQLiteStore
+from ghost_daemon.storage.qdrant_store import QdrantStore
 from vantage.schemas import ApprovalSource, Channel
 
 if TYPE_CHECKING:
     from ghost_daemon.config import Config
+    from ghost_daemon.models.registry import LLMProvider
     from ghost_daemon.subscribers.registry import SubscriberRegistry
 
 logger = logging.getLogger(__name__)
@@ -43,6 +45,8 @@ def build_app(
     audit_log: AuditLog,
     subscriber_registry: "SubscriberRegistry",
     cfg: "Config",
+    qdrant: QdrantStore | None = None,
+    llm: "LLMProvider | None" = None,
 ) -> FastAPI:
     app = FastAPI(title="Vantage", docs_url=None, redoc_url=None)
 
@@ -86,6 +90,8 @@ def build_app(
         try:
             approved = gate.approve(draft_id, edited_payload=edited, source=ApprovalSource.MANUAL)
             asyncio.create_task(_push_to_subscribers(approved, approved.artifact_type))
+            if qdrant is not None and llm is not None:
+                asyncio.create_task(_index_in_qdrant(approved))
         except Exception as exc:
             logger.error("Approve failed: %s", exc)
         return RedirectResponse("/", status_code=303)
@@ -129,6 +135,45 @@ def build_app(
             }
             for r in rows
         ])
+
+    # ── API endpoints ──────────────────────────────────────────────────────────
+
+    @app.get("/api/history")
+    async def api_history(artifact_type: str | None = None, limit: int = 20):
+        """Recent approved artifacts from Qdrant for context inspection."""
+        if qdrant is None:
+            return JSONResponse([])
+        items = await qdrant.list_approved(cfg.developer_id, artifact_type=artifact_type, limit=limit)
+        return JSONResponse(items)
+
+    @app.get("/api/search")
+    async def api_search(q: str, artifact_type: str | None = None, limit: int = 10):
+        """Semantic search over approved artifacts."""
+        if qdrant is None or llm is None:
+            return JSONResponse({"error": "Qdrant or embedder not configured"}, status_code=503)
+        vec = await llm.embed(q)
+        results = await qdrant.search_approved(vec, cfg.developer_id, artifact_type=artifact_type, top_k=limit)
+        return JSONResponse({"query": q, "results": results})
+
+    # ── Internal helpers ───────────────────────────────────────────────────────
+
+    async def _index_in_qdrant(approved) -> None:
+        from ghost_daemon.daemon import _artifact_text
+        try:
+            text = _artifact_text(approved.artifact_type, approved.payload)
+            vec = await llm.embed(text)
+            payload_dict = approved.payload.model_dump(mode="json") if hasattr(approved.payload, "model_dump") else {}
+            await qdrant.upsert_approved(
+                approved_id=approved.approval_id,
+                developer_id=approved.developer_id,
+                artifact_type=approved.artifact_type,
+                payload=payload_dict,
+                text=text,
+                vector=vec,
+                approved_at=approved.approved_at.isoformat(),
+            )
+        except Exception as exc:
+            logger.debug("Qdrant index skipped: %s", exc)
 
     # ── Internal push helper ───────────────────────────────────────────────────
 

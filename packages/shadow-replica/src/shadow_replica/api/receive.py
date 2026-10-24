@@ -38,7 +38,7 @@ def make_router(store: ReceivedStore, trusted_devs: list) -> APIRouter:
         if not approval_id:
             return JSONResponse({"error": "missing approval_id"}, status_code=400)
 
-        store.save(
+        await store.save_async(
             approval_id=approval_id,
             developer_id=dev.developer_id,
             artifact_type=artifact_type,

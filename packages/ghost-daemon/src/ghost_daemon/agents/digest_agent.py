@@ -13,6 +13,7 @@ from vantage.schemas import DraftPayload, RedactedContext, Turn, WeeklyDigest
 from ghost_daemon.config import Config
 from ghost_daemon.models.registry import LLMProvider
 from ghost_daemon.redaction.scrubber import scrub
+from ghost_daemon.storage.qdrant_store import QdrantStore
 from ghost_daemon.watchers.project_map import ProjectMap
 from ghost_daemon.watchers.session_tail import SessionTailer
 
@@ -43,6 +44,7 @@ class DigestState(TypedDict):
     repo_paths: list[str]
     raw_turns: list[dict]
     redacted_context: RedactedContext | None
+    historical_context: list[dict]
     llm_output: str | None
     draft: WeeklyDigest | None
     error: str | None
@@ -55,11 +57,13 @@ class DigestAgent:
         llm: LLMProvider,
         project_map: ProjectMap,
         tailer: SessionTailer,
+        qdrant: QdrantStore | None = None,
     ) -> None:
         self._cfg = cfg
         self._llm = llm
         self._project_map = project_map
         self._tailer = tailer
+        self._qdrant = qdrant
         self._graph = self._build()
 
     # ------------------------------------------------------------------
@@ -80,6 +84,7 @@ class DigestAgent:
             "repo_paths": [],
             "raw_turns": [],
             "redacted_context": None,
+            "historical_context": [],
             "llm_output": None,
             "draft": None,
             "error": None,
@@ -137,6 +142,23 @@ class DigestAgent:
 
         return {"raw_turns": raw_turns, "repo_paths": repo_paths}
 
+    async def _fetch_history(self, state: DigestState) -> dict:
+        if self._qdrant is None:
+            return {"historical_context": []}
+        try:
+            query = (
+                f"weekly digest {state['period_start'].date()} to {state['period_end'].date()} "
+                "engineering highlights commits blockers"
+            )
+            vec = await self._llm.embed(query)
+            hits = await self._qdrant.search_approved(
+                vec, state["developer_id"], artifact_type="weekly_digest", top_k=3
+            )
+            return {"historical_context": hits}
+        except Exception as exc:
+            logger.debug("History fetch skipped: %s", exc)
+            return {"historical_context": []}
+
     async def _scrub(self, state: DigestState) -> dict:
         combined = "\n".join(
             f"[{t.get('role', '?')}] {t.get('content_excerpt', '')}"
@@ -153,10 +175,22 @@ class DigestAgent:
         period_start = state["period_start"]
         period_end = state["period_end"]
 
+        history = state.get("historical_context", [])
+        history_block = ""
+        if history:
+            parts = []
+            for h in history:
+                p = h.get("payload", {})
+                hi = p.get("highlights", [])
+                ts = h.get("approved_at", "")[:10]
+                parts.append(f"[{ts}] Highlights: {'; '.join(hi[:2])}")
+            history_block = "\n\nPrevious digests (for continuity):\n" + "\n".join(parts)
+
         user_msg = (
             f"Period: {period_start.date()} to {period_end.date()}\n\n"
             f"Session context:\n{ctx.scrubbed_text[:6000]}\n\n"
             f"Redaction note: {len(ctx.redactions)} item(s) were redacted."
+            f"{history_block}"
         )
 
         try:
@@ -217,12 +251,14 @@ class DigestAgent:
     def _build(self) -> Any:
         g: StateGraph = StateGraph(DigestState)
         g.add_node("collect_window", self._collect_window)
+        g.add_node("fetch_history", self._fetch_history)
         g.add_node("scrub", self._scrub)
         g.add_node("summarize", self._summarize)
         g.add_node("draft_digest", self._draft_digest)
 
         g.add_edge(START, "collect_window")
-        g.add_edge("collect_window", "scrub")
+        g.add_edge("collect_window", "fetch_history")
+        g.add_edge("fetch_history", "scrub")
         g.add_edge("scrub", "summarize")
         g.add_edge("summarize", "draft_digest")
         g.add_edge("draft_digest", END)

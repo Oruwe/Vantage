@@ -83,7 +83,7 @@ def digest(
 
     typer.echo(f"Generating digest for {period_start.date()} → {period_end.date()} …")
 
-    agent = DigestAgent(cfg, daemon.llm, daemon.project_map, daemon.tailer)
+    agent = DigestAgent(cfg, daemon.llm, daemon.project_map, daemon.tailer, qdrant=daemon.qdrant)
 
     async def _run():
         draft = await agent.run(period_start, period_end, repo_filter=repo or None)
@@ -447,10 +447,15 @@ def share(
 
     async def _do_push():
         results = []
+        any_ok = False
         for sub_row in targets:
             identity = registry.to_identity(sub_row)
             ok = await _push(approved, identity, cfg.developer_id)
             results.append((identity.name, ok))
+            if ok:
+                any_ok = True
+        if any_ok:
+            await daemon.index_approved(approved)
         return results
 
     results = asyncio.run(_do_push())
@@ -505,7 +510,7 @@ def commit_report(
     daemon = GhostDaemon(cfg)
 
     repo_path = Path(repo).resolve() if repo else Path(os.getcwd())
-    agent = CommitAgent(cfg, daemon.llm, daemon.tailer)
+    agent = CommitAgent(cfg, daemon.llm, daemon.tailer, qdrant=daemon.qdrant)
 
     async def _run():
         draft = await agent.run(repo_path, commit_sha=sha or None)

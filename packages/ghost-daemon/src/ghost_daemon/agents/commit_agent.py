@@ -13,6 +13,7 @@ from vantage.schemas import CommitReport, DraftPayload, RedactedContext
 from ghost_daemon.config import Config
 from ghost_daemon.models.registry import LLMProvider
 from ghost_daemon.redaction.scrubber import scrub
+from ghost_daemon.storage.qdrant_store import QdrantStore
 from ghost_daemon.watchers.session_tail import SessionTailer
 
 logger = logging.getLogger(__name__)
@@ -41,16 +42,24 @@ class CommitState(TypedDict):
     files_touched: list[str]
     session_context: str
     redacted_context: RedactedContext | None
+    historical_context: list[dict]
     llm_output: str | None
     draft: CommitReport | None
     error: str | None
 
 
 class CommitAgent:
-    def __init__(self, cfg: Config, llm: LLMProvider, tailer: SessionTailer) -> None:
+    def __init__(
+        self,
+        cfg: Config,
+        llm: LLMProvider,
+        tailer: SessionTailer,
+        qdrant: QdrantStore | None = None,
+    ) -> None:
         self._cfg = cfg
         self._llm = llm
         self._tailer = tailer
+        self._qdrant = qdrant
         self._graph = self._build()
 
     async def run(
@@ -69,6 +78,7 @@ class CommitAgent:
             "files_touched": meta["files_touched"],
             "session_context": "",
             "redacted_context": None,
+            "historical_context": [],
             "llm_output": None,
             "draft": None,
             "error": None,
@@ -84,6 +94,23 @@ class CommitAgent:
         )
 
     # ── Graph nodes ────────────────────────────────────────────────────────────
+
+    async def _fetch_history(self, state: CommitState) -> dict:
+        if self._qdrant is None:
+            return {"historical_context": []}
+        try:
+            query = (
+                f"commit {state['branch']} {state['author_msg']} "
+                f"{' '.join(state['files_touched'][:5])}"
+            )
+            vec = await self._llm.embed(query)
+            hits = await self._qdrant.search_approved(
+                vec, state["developer_id"], artifact_type="commit_report", top_k=3
+            )
+            return {"historical_context": hits}
+        except Exception as exc:
+            logger.debug("History fetch skipped: %s", exc)
+            return {"historical_context": []}
 
     async def _collect_context(self, state: CommitState) -> dict:
         recent_turns: list[str] = []
@@ -115,6 +142,17 @@ class CommitAgent:
         ctx = state["redacted_context"]
         if ctx is None:
             return {"llm_output": None}
+        history = state.get("historical_context", [])
+        history_block = ""
+        if history:
+            parts = []
+            for h in history:
+                p = h.get("payload", {})
+                ts = h.get("approved_at", "")[:10]
+                summ = p.get("generated_summary", "")[:120]
+                parts.append(f"[{ts}] {summ}")
+            history_block = "\n\nSimilar past commits (for reference):\n" + "\n".join(parts)
+
         user_msg = (
             f"Commit {state['commit_sha'][:12]} on branch '{state['branch']}'\n"
             f"Message: {state['author_msg']}\n"
@@ -122,6 +160,7 @@ class CommitAgent:
             f"{', '.join(state['files_touched'][:10])}\n\n"
             f"Diff stats:\n{state['diff_stat'][:1500]}\n\n"
             f"Recent session context (redacted):\n{ctx.scrubbed_text[:2000]}"
+            f"{history_block}"
         )
         try:
             output = await self._llm.complete(
@@ -155,11 +194,13 @@ class CommitAgent:
 
     def _build(self) -> Any:
         g: StateGraph = StateGraph(CommitState)
+        g.add_node("fetch_history", self._fetch_history)
         g.add_node("collect_context", self._collect_context)
         g.add_node("scrub", self._scrub)
         g.add_node("summarize", self._summarize)
         g.add_node("draft_report", self._draft_report)
-        g.add_edge(START, "collect_context")
+        g.add_edge(START, "fetch_history")
+        g.add_edge("fetch_history", "collect_context")
         g.add_edge("collect_context", "scrub")
         g.add_edge("scrub", "summarize")
         g.add_edge("summarize", "draft_report")

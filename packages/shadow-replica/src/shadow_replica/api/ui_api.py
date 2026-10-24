@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 if TYPE_CHECKING:
+    from shadow_replica.agent.subscriber_agent import SubscriberAgent
     from shadow_replica.connections.ws_hub import WSHub
     from shadow_replica.storage.received_store import ReceivedStore
     from shadow_replica.config import ReplicaConfig
@@ -48,7 +49,12 @@ def _extract_summary(channel: str, payload: dict) -> str:
     return channel
 
 
-def make_ui_router(store: "ReceivedStore", hub: "WSHub", cfg: "ReplicaConfig") -> APIRouter:
+def make_ui_router(
+    store: "ReceivedStore",
+    hub: "WSHub",
+    cfg: "ReplicaConfig",
+    agent: "SubscriberAgent | None" = None,
+) -> APIRouter:
     r = APIRouter(prefix="/ui/api")
 
     @r.get("/status")
@@ -77,14 +83,17 @@ def make_ui_router(store: "ReceivedStore", hub: "WSHub", cfg: "ReplicaConfig") -
         for dev_id in dev_ids:
             seen.add(dev_id)
             rows = store.list_for_developer(dev_id, limit=1000)
-            channels = list(dict.fromkeys(row.channel for row in rows[:20]))
+            channel_counts: dict[str, int] = {}
+            for row in rows:
+                channel_counts[row.channel] = channel_counts.get(row.channel, 0) + 1
             result.append({
                 "developer_id": dev_id,
                 "name": dev_name_map.get(dev_id, dev_id),
                 "is_online": dev_id in online,
                 "last_received_at": rows[0].received_at if rows else None,
                 "artifact_count": len(rows),
-                "recent_channels": channels[:5],
+                "recent_channels": list(dict.fromkeys(row.channel for row in rows[:20]))[:5],
+                "channel_counts": channel_counts,
             })
         for dev in cfg.trusted_devs:
             if dev.developer_id not in seen:
@@ -95,6 +104,7 @@ def make_ui_router(store: "ReceivedStore", hub: "WSHub", cfg: "ReplicaConfig") -
                     "last_received_at": None,
                     "artifact_count": 0,
                     "recent_channels": [],
+                    "channel_counts": {},
                 })
         return JSONResponse(result)
 
@@ -182,6 +192,31 @@ def make_ui_router(store: "ReceivedStore", hub: "WSHub", cfg: "ReplicaConfig") -
         fallback.request_id = probe_req.request_id
         return JSONResponse(fallback.model_dump(mode="json"))
 
+    @r.get("/sparklines")
+    async def get_sparklines(request: Request, days: int = 14):
+        _require_manager(request, cfg.manager_token)
+        from datetime import date as _date
+        today = _date.today()
+        all_rows = store.list_all(limit=50000)
+        result: dict[str, list[int]] = {dev_id: [0] * days for dev_id in store.list_developers()}
+        for dev in cfg.trusted_devs:
+            if dev.developer_id not in result:
+                result[dev.developer_id] = [0] * days
+        for row in all_rows:
+            if not row.received_at:
+                continue
+            try:
+                row_date = _date.fromisoformat(row.received_at[:10])
+                idx = (today - row_date).days
+                if 0 <= idx < days:
+                    dev = row.developer_id
+                    if dev not in result:
+                        result[dev] = [0] * days
+                    result[dev][days - 1 - idx] += 1
+            except Exception:
+                pass
+        return JSONResponse(result)
+
     @r.post("/query")
     async def query(request: Request):
         _require_manager(request, cfg.manager_token)
@@ -195,9 +230,47 @@ def make_ui_router(store: "ReceivedStore", hub: "WSHub", cfg: "ReplicaConfig") -
         channel = data.get("channel") or None
         if not q:
             raise HTTPException(400, "query required")
-        from shadow_replica.agent.subscriber_agent import SubscriberAgent
-        agent = SubscriberAgent(store)
-        result = agent.run(q, developer_id=developer_id, channel=channel)
+        _agent = agent
+        if _agent is None:
+            from shadow_replica.agent.subscriber_agent import SubscriberAgent
+            _agent = SubscriberAgent(store, embedder=store._embedder)
+        result = await _agent.run_async(q, developer_id=developer_id, channel=channel)
         return JSONResponse(result)
+
+    @r.get("/search")
+    async def search(
+        request: Request,
+        q: str,
+        developer_id: str | None = None,
+        channel: str | None = None,
+        limit: int = 10,
+    ):
+        """Semantic search over received artifacts."""
+        _require_manager(request, cfg.manager_token)
+        if not q:
+            raise HTTPException(400, "q required")
+        results = await store.semantic_search(
+            query=q,
+            developer_id=developer_id or None,
+            channel=channel or None,
+            limit=min(limit, 50),
+        )
+        dev_name_map = {d.developer_id: d.name for d in cfg.trusted_devs}
+        for r in results:
+            r["developer_name"] = dev_name_map.get(r.get("developer_id", ""), r.get("developer_id", ""))
+            r["summary"] = _extract_summary(r.get("channel", ""), r.get("payload", {}))
+        return JSONResponse({"query": q, "results": results})
+
+    @r.get("/stats")
+    async def stats(request: Request):
+        """Storage statistics."""
+        _require_manager(request, cfg.manager_token)
+        total = store.count()
+        devs = store.list_developers()
+        return JSONResponse({
+            "total_artifacts": total,
+            "total_developers": len(devs),
+            "storage_backend": "qdrant",
+        })
 
     return r

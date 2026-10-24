@@ -17,6 +17,27 @@ def _replica_config_dir() -> Path:
 
 
 @dataclass
+class QdrantConfig:
+    url: str = "http://localhost:6333"
+    enabled: bool = True
+
+
+@dataclass
+class EmbeddingsConfig:
+    provider: str = "ollama"
+    model: str = "nomic-embed-text"
+    endpoint: str = "http://localhost:11434"
+
+
+@dataclass
+class LLMConfig:
+    provider: str = ""
+    model: str = ""
+    api_key_env: str = ""
+    endpoint: str = ""
+
+
+@dataclass
 class TrustedDev:
     developer_id: str
     name: str
@@ -31,6 +52,9 @@ class ReplicaConfig:
     bind_port: int = 7475
     manager_token: str = ""
     trusted_devs: list[TrustedDev] = field(default_factory=list)
+    qdrant: QdrantConfig = field(default_factory=QdrantConfig)
+    embeddings: EmbeddingsConfig = field(default_factory=EmbeddingsConfig)
+    llm: LLMConfig = field(default_factory=LLMConfig)
 
     @property
     def config_dir(self) -> Path:
@@ -68,12 +92,31 @@ def load(path: Path | None = None) -> ReplicaConfig:
         manager_token = "vsm_" + secrets.token_urlsafe(24)
         generated = True
 
+    qdrant_data = data.get("qdrant", {})
+    emb_data = data.get("embeddings", {})
+    llm_data = data.get("llm", {})
+
     cfg = ReplicaConfig(
         replica_id=data.get("replica_id", str(uuid.uuid4())),
         bind_host=data.get("bind_host", "0.0.0.0"),
         bind_port=data.get("bind_port", 7475),
         manager_token=manager_token,
         trusted_devs=trusted_devs,
+        qdrant=QdrantConfig(
+            url=qdrant_data.get("url", "http://localhost:6333"),
+            enabled=qdrant_data.get("enabled", True),
+        ),
+        embeddings=EmbeddingsConfig(
+            provider=emb_data.get("provider", "ollama"),
+            model=emb_data.get("model", "nomic-embed-text"),
+            endpoint=emb_data.get("endpoint", "http://localhost:11434"),
+        ),
+        llm=LLMConfig(
+            provider=llm_data.get("provider", ""),
+            model=llm_data.get("model", ""),
+            api_key_env=llm_data.get("api_key_env", ""),
+            endpoint=llm_data.get("endpoint", ""),
+        ),
     )
     if generated:
         _write(cfg, config_path)
@@ -120,7 +163,25 @@ def _write(cfg: ReplicaConfig, path: Path) -> None:
         f"bind_port = {cfg.bind_port}\n",
         f'manager_token = "{cfg.manager_token}"\n',
         "\n",
+        "[qdrant]\n",
+        f'url = "{cfg.qdrant.url}"\n',
+        f"enabled = {'true' if cfg.qdrant.enabled else 'false'}\n",
+        "\n",
+        "[embeddings]\n",
+        f'provider = "{cfg.embeddings.provider}"\n',
+        f'model = "{cfg.embeddings.model}"\n',
+        f'endpoint = "{cfg.embeddings.endpoint}"\n',
+        "\n",
     ]
+    if cfg.llm.provider:
+        lines += [
+            "[llm]\n",
+            f'provider = "{cfg.llm.provider}"\n',
+            f'model = "{cfg.llm.model}"\n',
+            f'api_key_env = "{cfg.llm.api_key_env}"\n',
+            f'endpoint = "{cfg.llm.endpoint}"\n',
+            "\n",
+        ]
     for dev in cfg.trusted_devs:
         lines += [
             "[[trusted_devs]]\n",

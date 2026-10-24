@@ -43,6 +43,12 @@ class AuditConfig:
 
 
 @dataclass
+class QdrantConfig:
+    url: str = "http://localhost:6333"
+    enabled: bool = True
+
+
+@dataclass
 class Config:
     developer_id: str
     display_name: str = ""
@@ -53,6 +59,7 @@ class Config:
     embeddings: EmbeddingsConfig = field(default_factory=EmbeddingsConfig)
     ui: UIConfig = field(default_factory=UIConfig)
     audit: AuditConfig = field(default_factory=AuditConfig)
+    qdrant: QdrantConfig = field(default_factory=QdrantConfig)
 
     @property
     def vantage_dir(self) -> Path:
@@ -113,6 +120,8 @@ def load(path: Path | None = None) -> Config:
     ui_data = data.get("ui", {})
     audit_data = data.get("audit", {})
 
+    qdrant_data = data.get("qdrant", {})
+
     return Config(
         developer_id=data.get("developer_id", str(uuid.uuid4())),
         display_name=data.get("display_name", ""),
@@ -137,6 +146,10 @@ def load(path: Path | None = None) -> Config:
         audit=AuditConfig(
             enabled=audit_data.get("enabled", True),
             retention_days=audit_data.get("retention_days", 30),
+        ),
+        qdrant=QdrantConfig(
+            url=qdrant_data.get("url", "http://localhost:6333"),
+            enabled=qdrant_data.get("enabled", True),
         ),
     )
 
@@ -171,6 +184,10 @@ port = 7474
 [audit]
 enabled = true
 retention_days = 30
+
+[qdrant]
+url = "http://localhost:6333"
+enabled = true
 """,
         encoding="utf-8",
     )
