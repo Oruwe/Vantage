@@ -7,6 +7,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from shadow_replica.auth.token_verify import verify_request
+from shadow_replica.metrics import artifacts_received
 from shadow_replica.storage.received_store import ReceivedStore
 
 logger = logging.getLogger(__name__)
@@ -46,6 +47,7 @@ def make_router(store: ReceivedStore, trusted_devs: list) -> APIRouter:
             payload_json=json.dumps(payload),
             approved_at=approved_at,
         )
+        artifacts_received.labels(developer_id=dev.developer_id, channel=channel).inc()
 
         logger.info(
             "Received %s from developer %s (approval_id=%s)",

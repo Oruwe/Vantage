@@ -78,7 +78,8 @@ class SQLiteStore:
                 select(DigestDraftRow)
                 .where(DigestDraftRow.status != "pending")
                 .order_by(DigestDraftRow.created_at.desc())  # type: ignore[attr-defined]
-            ).fetchmany(limit))
+                .limit(limit)
+            ).all())
 
     def reject(self, draft_id: str) -> None:
         with Session(self._engine) as session:

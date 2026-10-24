@@ -45,6 +45,29 @@ class GhostDaemon:
 
     async def run_forever(self) -> None:
         await self.start()
+
+        tasks: list[asyncio.Task] = []
+
+        live_probe_subs = self.subscriber_registry.subscribers_for_channel("live_probe")
+        if live_probe_subs:
+            from ghost_daemon.agents.probe_agent import ProbeAgent
+            from ghost_daemon.transport.ws_client import WSClient
+
+            probe_agent = ProbeAgent(self.cfg, self.llm, self.tailer)
+            machine_id = self.cfg.machine_id
+
+            for row in live_probe_subs:
+                identity = self.subscriber_registry.to_identity(row)
+                client = WSClient(identity, self.cfg.developer_id, machine_id, probe_agent)
+                tasks.append(asyncio.create_task(
+                    client.run_forever(),
+                    name=f"ws_client:{row.id}",
+                ))
+            logger.info(
+                "Started %d WS client(s) for live_probe subscribers",
+                len(live_probe_subs),
+            )
+
         config = uvicorn.Config(
             app=self._app,
             host=self.cfg.ui.bind_address,
@@ -52,7 +75,13 @@ class GhostDaemon:
             log_level="warning",
         )
         server = uvicorn.Server(config)
-        await server.serve()
+        try:
+            await server.serve()
+        finally:
+            for t in tasks:
+                t.cancel()
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
 
     def get_app(self):
         return self._app

@@ -9,10 +9,12 @@ authors = [
 requires-python = ">=3.14"
 dependencies = [
     "ghost-daemon",
+    "shadow-replica",
 ]
 
 [tool.uv.sources]
 ghost-daemon = { workspace = true }
+shadow-replica = { workspace = true }
 
 [build-system]
 requires = ["uv_build>=0.12.19,<0.13.0"]

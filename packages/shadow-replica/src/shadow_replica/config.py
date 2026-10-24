@@ -20,6 +20,7 @@ class TrustedDev:
     developer_id: str
     name: str
     token_value: str  # vsub_... bearer token from the dev
+    subscriber_id: str = ""  # sub_... ID on the dev's side (needed for probe policy lookup)
 
 
 @dataclass
@@ -51,6 +52,7 @@ def load(path: Path | None = None) -> ReplicaConfig:
             developer_id=d["developer_id"],
             name=d.get("name", d["developer_id"]),
             token_value=d["token_value"],
+            subscriber_id=d.get("subscriber_id", ""),
         )
         for d in data.get("trusted_devs", [])
     ]
@@ -63,7 +65,13 @@ def load(path: Path | None = None) -> ReplicaConfig:
     )
 
 
-def add_trusted_dev(developer_id: str, name: str, token_value: str, path: Path | None = None) -> Path:
+def add_trusted_dev(
+    developer_id: str,
+    name: str,
+    token_value: str,
+    subscriber_id: str = "",
+    path: Path | None = None,
+) -> Path:
     """Add a trusted dev to the replica config TOML and return the config path."""
     config_path = path or (_replica_config_dir() / "replica.toml")
     config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -74,10 +82,17 @@ def add_trusted_dev(developer_id: str, name: str, token_value: str, path: Path |
         if dev.developer_id == developer_id:
             dev.token_value = token_value
             dev.name = name
+            if subscriber_id:
+                dev.subscriber_id = subscriber_id
             updated = True
             break
     if not updated:
-        cfg.trusted_devs.append(TrustedDev(developer_id=developer_id, name=name, token_value=token_value))
+        cfg.trusted_devs.append(TrustedDev(
+            developer_id=developer_id,
+            name=name,
+            token_value=token_value,
+            subscriber_id=subscriber_id,
+        ))
 
     _write(cfg, config_path)
     return config_path
@@ -96,6 +111,8 @@ def _write(cfg: ReplicaConfig, path: Path) -> None:
             f'developer_id = "{dev.developer_id}"\n',
             f'name = "{dev.name}"\n',
             f'token_value = "{dev.token_value}"\n',
-            "\n",
         ]
+        if dev.subscriber_id:
+            lines.append(f'subscriber_id = "{dev.subscriber_id}"\n')
+        lines.append("\n")
     path.write_text("".join(lines), encoding="utf-8")

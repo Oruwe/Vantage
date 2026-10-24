@@ -95,21 +95,7 @@ def digest(
     typer.echo(f"Draft ready: {url}")
 
     if open_ui:
-        import uvicorn as _uvicorn
-        uv_cfg = _uvicorn.Config(
-            app=daemon.get_app(),
-            host=cfg.ui.bind_address,
-            port=cfg.ui.port,
-            log_level="warning",
-        )
-        server = _uvicorn.Server(uv_cfg)
-
-        async def _serve():
-            webbrowser.open(url)
-            await server.serve()
-
-        typer.echo("Review UI running — press Ctrl+C to stop.")
-        asyncio.run(_serve())
+        _open_or_start_ui(url, cfg, daemon)
 
 
 @app.command()
@@ -334,7 +320,7 @@ def subscribers_show_token(
     if not row:
         typer.echo(f"Subscriber {subscriber!r} not found.", err=True)
         raise typer.Exit(1)
-    typer.echo(row.token_value)
+    typer.echo(registry.to_identity(row).token_value)
 
 
 @subscribers_app.command("revoke")
@@ -355,6 +341,62 @@ def subscribers_revoke(
 
     registry.revoke(row.id)
     typer.echo(f"Subscriber '{row.name}' ({row.id}) revoked. Future pushes will be skipped.")
+
+
+@subscribers_app.command("rotate")
+def subscribers_rotate(
+    subscriber: Annotated[str, typer.Argument(help="Subscriber ID or name")],
+):
+    """Rotate the bearer token for a subscriber. Old token is immediately invalidated."""
+    from ghost_daemon import config as _cfg_mod
+    from ghost_daemon.subscribers.registry import SubscriberRegistry
+
+    cfg = _cfg_mod.load()
+    registry = SubscriberRegistry(cfg.sqlite_path)
+
+    row = registry.get(subscriber) or registry.get_by_name(subscriber)
+    if not row:
+        typer.echo(f"Subscriber {subscriber!r} not found.", err=True)
+        raise typer.Exit(1)
+    if row.revoked_at:
+        typer.echo(f"Subscriber '{row.name}' is already revoked.", err=True)
+        raise typer.Exit(1)
+
+    new_token = registry.rotate(row.id)
+    typer.echo(f"Token rotated for '{row.name}' ({row.id}).")
+    typer.echo(f"\nNew token (give this to {row.name} — old token is now invalid):")
+    typer.echo(f"  {new_token}")
+    typer.echo(f"\nThey should update their shadow-replica with:")
+    typer.echo(f"  shadow-replica import-dev {cfg.developer_id} --name \"{row.name}\" --token {new_token}")
+
+
+@subscribers_app.command("token-history")
+def subscribers_token_history(
+    subscriber: Annotated[str, typer.Argument(help="Subscriber ID or name")],
+):
+    """Show the full token issuance and revocation history for a subscriber."""
+    from ghost_daemon import config as _cfg_mod
+    from ghost_daemon.subscribers.registry import SubscriberRegistry
+
+    cfg = _cfg_mod.load()
+    registry = SubscriberRegistry(cfg.sqlite_path)
+
+    row = registry.get(subscriber) or registry.get_by_name(subscriber)
+    if not row:
+        typer.echo(f"Subscriber {subscriber!r} not found.", err=True)
+        raise typer.Exit(1)
+
+    history = registry.token_history(row.id)
+    if not history:
+        typer.echo(f"No token history for '{row.name}'.")
+        return
+
+    typer.echo(f"Token history for '{row.name}' ({row.id}) — {len(history)} entr{'y' if len(history)==1 else 'ies'}:")
+    typer.echo(f"{'#':<4} {'ISSUED':<26} {'REVOKED':<26} {'REASON'}")
+    typer.echo("-" * 80)
+    for i, h in enumerate(history, 1):
+        revoked = h.revoked_at or "—"
+        typer.echo(f"{i:<4} {h.issued_at:<26} {revoked:<26} {h.revocation_reason}")
 
 
 @app.command("share")
@@ -599,6 +641,219 @@ def hook_uninstall(
         return
     hook_path.unlink()
     typer.echo(f"Vantage post-commit hook removed from {hook_path}")
+
+
+service_app = typer.Typer(help="Install or remove the Vantage background service.")
+app.add_typer(service_app, name="service")
+
+
+@service_app.command("install")
+def service_install(
+    mode: Annotated[str, typer.Option(help="Installer type: auto, windows, systemd, launchd")] = "auto",
+):
+    """Register vantage-ghost run as a background service / scheduled task."""
+    import sys
+    import shutil
+
+    resolved = mode
+    if mode == "auto":
+        if sys.platform == "win32":
+            resolved = "windows"
+        elif sys.platform == "darwin":
+            resolved = "launchd"
+        else:
+            resolved = "systemd"
+
+    if resolved == "windows":
+        _service_install_windows()
+    elif resolved == "systemd":
+        _service_install_systemd()
+    elif resolved == "launchd":
+        _service_install_launchd()
+    else:
+        typer.echo(f"Unknown mode {resolved!r}. Choose: windows, systemd, launchd.", err=True)
+        raise typer.Exit(1)
+
+
+@service_app.command("uninstall")
+def service_uninstall(
+    mode: Annotated[str, typer.Option(help="Installer type: auto, windows, systemd, launchd")] = "auto",
+):
+    """Remove the Vantage background service registration."""
+    import sys
+
+    resolved = mode
+    if mode == "auto":
+        if sys.platform == "win32":
+            resolved = "windows"
+        elif sys.platform == "darwin":
+            resolved = "launchd"
+        else:
+            resolved = "systemd"
+
+    if resolved == "windows":
+        _service_uninstall_windows()
+    elif resolved == "systemd":
+        _service_uninstall_systemd()
+    elif resolved == "launchd":
+        _service_uninstall_launchd()
+    else:
+        typer.echo(f"Unknown mode {resolved!r}. Choose: windows, systemd, launchd.", err=True)
+        raise typer.Exit(1)
+
+
+@service_app.command("status")
+def service_status():
+    """Check whether the Vantage service is installed and running."""
+    import sys
+    import subprocess
+
+    if sys.platform == "win32":
+        import winreg
+        try:
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, _WIN_RUN_KEY, 0, winreg.KEY_READ)
+            value, _ = winreg.QueryValueEx(key, _WIN_VALUE_NAME)
+            winreg.CloseKey(key)
+            typer.echo(f"Vantage daemon: registered in HKCU Run key.")
+            typer.echo(f"  Command: {value}")
+        except FileNotFoundError:
+            typer.echo("Vantage daemon: not registered (use 'vantage-ghost service install').")
+    elif sys.platform == "darwin":
+        plist = Path.home() / "Library" / "LaunchAgents" / "com.vantage.ghost.plist"
+        installed = plist.exists()
+        typer.echo(f"launchd plist {'installed' if installed else 'not found'}: {plist}")
+    else:
+        unit = Path.home() / ".config" / "systemd" / "user" / "vantage.service"
+        installed = unit.exists()
+        typer.echo(f"systemd unit {'installed' if installed else 'not found'}: {unit}")
+        if installed:
+            import subprocess
+            r = subprocess.run(
+                ["systemctl", "--user", "is-active", "vantage.service"],
+                capture_output=True, text=True,
+            )
+            typer.echo(f"  status: {r.stdout.strip()}")
+
+
+_WIN_RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+_WIN_VALUE_NAME = "VantageGhostDaemon"
+
+
+def _service_install_windows() -> None:
+    import shutil
+    import winreg
+
+    vantage_exe = shutil.which("vantage-ghost") or shutil.which("vantage")
+    if not vantage_exe:
+        typer.echo("Could not find vantage-ghost on PATH.", err=True)
+        raise typer.Exit(1)
+
+    command = f'"{vantage_exe}" run'
+    key = winreg.OpenKey(
+        winreg.HKEY_CURRENT_USER,
+        _WIN_RUN_KEY,
+        0,
+        winreg.KEY_SET_VALUE,
+    )
+    winreg.SetValueEx(key, _WIN_VALUE_NAME, 0, winreg.REG_SZ, command)
+    winreg.CloseKey(key)
+
+    typer.echo("Vantage daemon registered in HKCU Run key.")
+    typer.echo("It will start automatically at your next login.")
+    typer.echo(f"Command: {command}")
+
+
+def _service_uninstall_windows() -> None:
+    import winreg
+
+    try:
+        key = winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            _WIN_RUN_KEY,
+            0,
+            winreg.KEY_SET_VALUE,
+        )
+        winreg.DeleteValue(key, _WIN_VALUE_NAME)
+        winreg.CloseKey(key)
+        typer.echo("Vantage daemon removed from HKCU Run key.")
+    except FileNotFoundError:
+        typer.echo("Vantage Run key entry not found — nothing to remove.")
+
+
+def _service_install_systemd() -> None:
+    import shutil as _shutil
+    exe = _shutil.which("vantage-ghost") or _shutil.which("vantage")
+    if not exe:
+        typer.echo("vantage-ghost not found on PATH.", err=True)
+        raise typer.Exit(1)
+
+    unit_dir = Path.home() / ".config" / "systemd" / "user"
+    unit_dir.mkdir(parents=True, exist_ok=True)
+    unit_path = unit_dir / "vantage.service"
+    unit_path.write_text(
+        f"[Unit]\nDescription=Vantage Ghost Daemon\nAfter=graphical-session.target\n\n"
+        f"[Service]\nExecStart={exe} run\nRestart=on-failure\nRestartSec=5\n\n"
+        f"[Install]\nWantedBy=default.target\n",
+        encoding="utf-8",
+    )
+    import subprocess
+    subprocess.run(["systemctl", "--user", "daemon-reload"], check=False)
+    subprocess.run(["systemctl", "--user", "enable", "--now", "vantage.service"], check=False)
+    typer.echo(f"systemd user service installed: {unit_path}")
+    typer.echo("It will start automatically at login. Running now.")
+
+
+def _service_uninstall_systemd() -> None:
+    import subprocess
+    subprocess.run(["systemctl", "--user", "disable", "--now", "vantage.service"], check=False)
+    unit_path = Path.home() / ".config" / "systemd" / "user" / "vantage.service"
+    if unit_path.exists():
+        unit_path.unlink()
+        typer.echo(f"Removed: {unit_path}")
+    subprocess.run(["systemctl", "--user", "daemon-reload"], check=False)
+    typer.echo("systemd user service uninstalled.")
+
+
+def _service_install_launchd() -> None:
+    import shutil as _shutil
+    exe = _shutil.which("vantage-ghost") or _shutil.which("vantage")
+    if not exe:
+        typer.echo("vantage-ghost not found on PATH.", err=True)
+        raise typer.Exit(1)
+
+    agents_dir = Path.home() / "Library" / "LaunchAgents"
+    agents_dir.mkdir(parents=True, exist_ok=True)
+    plist_path = agents_dir / "com.vantage.ghost.plist"
+    plist_path.write_text(
+        f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.vantage.ghost</string>
+  <key>ProgramArguments</key>
+  <array><string>{exe}</string><string>run</string></array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+</dict>
+</plist>""",
+        encoding="utf-8",
+    )
+    import subprocess
+    subprocess.run(["launchctl", "load", str(plist_path)], check=False)
+    typer.echo(f"launchd agent installed: {plist_path}")
+    typer.echo("The daemon will start now and at every login.")
+
+
+def _service_uninstall_launchd() -> None:
+    import subprocess
+    plist_path = Path.home() / "Library" / "LaunchAgents" / "com.vantage.ghost.plist"
+    if plist_path.exists():
+        subprocess.run(["launchctl", "unload", str(plist_path)], check=False)
+        plist_path.unlink()
+        typer.echo(f"Removed: {plist_path}")
+    else:
+        typer.echo("launchd plist not found — nothing to remove.")
 
 
 @app.command("init")

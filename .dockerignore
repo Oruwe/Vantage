@@ -1,0 +1,13 @@
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/.venv
+**/.env
+**/.git
+**/node_modules
+**/dist
+**/build
+*.egg-info
+.pytest_cache
+check_syntax.py
+README.md

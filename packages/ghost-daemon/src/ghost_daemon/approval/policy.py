@@ -21,12 +21,19 @@ def load_policy(subscriber_id: str, vantage_dir: Path) -> SharingPolicy:
             auto_approve=False,
         )
     with open(policy_path, "rb") as f:
-        data = tomllib.load(f)
+        raw = f.read()
+    if raw.startswith(b"\xef\xbb\xbf"):
+        raw = raw[3:]  # strip UTF-8 BOM written by PowerShell Out-File
+    data = tomllib.loads(raw.decode("utf-8"))
     return SharingPolicy(
         subscriber_id=subscriber_id,
         channels=[Channel(c) for c in data.get("channels", ["weekly_digest"])],
         redaction_level=RedactionLevel(data.get("redaction_level", "standard")),
         auto_approve=data.get("auto_approve", False),
+        probe_hours_start=data.get("probe_hours_start"),
+        probe_hours_end=data.get("probe_hours_end"),
+        probe_repos_allow=data.get("probe_repos_allow", []),
+        probe_repos_deny=data.get("probe_repos_deny", []),
     )
 
 
@@ -36,11 +43,21 @@ def save_policy(policy: SharingPolicy, vantage_dir: Path) -> Path:
     policies_dir.mkdir(parents=True, exist_ok=True)
     policy_path = policies_dir / f"{policy.subscriber_id}.toml"
     channels_toml = "[" + ", ".join(f'"{c.value}"' for c in policy.channels) + "]"
-    policy_path.write_text(
-        f'subscriber_id = "{policy.subscriber_id}"\n'
-        f"channels = {channels_toml}\n"
-        f'redaction_level = "{policy.redaction_level.value}"\n'
+    lines = [
+        f'subscriber_id = "{policy.subscriber_id}"\n',
+        f"channels = {channels_toml}\n",
+        f'redaction_level = "{policy.redaction_level.value}"\n',
         f"auto_approve = {str(policy.auto_approve).lower()}\n",
-        encoding="utf-8",
-    )
+    ]
+    if policy.probe_hours_start is not None:
+        lines.append(f"probe_hours_start = {policy.probe_hours_start}\n")
+    if policy.probe_hours_end is not None:
+        lines.append(f"probe_hours_end = {policy.probe_hours_end}\n")
+    if policy.probe_repos_allow:
+        repos_allow = "[" + ", ".join(f'"{r}"' for r in policy.probe_repos_allow) + "]"
+        lines.append(f"probe_repos_allow = {repos_allow}\n")
+    if policy.probe_repos_deny:
+        repos_deny = "[" + ", ".join(f'"{r}"' for r in policy.probe_repos_deny) + "]"
+        lines.append(f"probe_repos_deny = {repos_deny}\n")
+    policy_path.write_text("".join(lines), encoding="utf-8")
     return policy_path

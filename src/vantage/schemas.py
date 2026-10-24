@@ -161,6 +161,11 @@ class SharingPolicy(BaseModel):
     channels: list[Channel] = Field(default_factory=list)
     redaction_level: RedactionLevel = RedactionLevel.STANDARD
     auto_approve: bool = False
+    # Live-probe gating (M4)
+    probe_hours_start: int | None = None   # 0–23 UTC; None = no restriction
+    probe_hours_end: int | None = None     # 0–23 UTC exclusive; None = no restriction
+    probe_repos_allow: list[str] = Field(default_factory=list)  # empty = allow all
+    probe_repos_deny: list[str] = Field(default_factory=list)
 
 
 class ScopedTokenClaims(BaseModel):
@@ -171,6 +176,24 @@ class ScopedTokenClaims(BaseModel):
     issued_at: datetime = Field(default_factory=datetime.utcnow)
     expires_at: datetime
     revocation_counter: int = 0
+
+
+class ProbeRequest(BaseModel):
+    request_id: str = Field(default_factory=lambda: str(uuid4()))
+    subscriber_id: str
+    repo_hint: str = ""
+    requested_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ProbeResponse(BaseModel):
+    request_id: str
+    developer_id: str
+    policy_decision: PolicyDecision
+    snapshot: SessionSnapshot | None = None
+    fallback_summary: str = ""
+    staleness_seconds: int = 0
+    redaction_level_applied: RedactionLevel = RedactionLevel.STANDARD
+    responded_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class AuditEntry(BaseModel):

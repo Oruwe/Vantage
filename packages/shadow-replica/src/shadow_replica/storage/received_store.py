@@ -65,3 +65,25 @@ class ReceivedStore:
                 q = q.where(ReceivedArtifactRow.channel == channel)
             q = q.order_by(ReceivedArtifactRow.received_at.desc()).limit(limit)
             return list(session.exec(q).all())
+
+    def list_all(
+        self,
+        channel: str | None = None,
+        limit: int = 100,
+    ) -> list[ReceivedArtifactRow]:
+        """Return recent artifacts across all developers (for team dashboard)."""
+        with Session(self._engine) as session:
+            q = select(ReceivedArtifactRow)
+            if channel:
+                q = q.where(ReceivedArtifactRow.channel == channel)
+            q = q.order_by(ReceivedArtifactRow.received_at.desc()).limit(limit)
+            return list(session.exec(q).all())
+
+    def list_developers(self) -> list[str]:
+        """Return distinct developer IDs that have sent at least one artifact."""
+        from sqlmodel import text
+        with Session(self._engine) as session:
+            result = session.exec(
+                text("SELECT DISTINCT developer_id FROM received_artifacts ORDER BY developer_id")
+            )
+            return [row[0] for row in result]

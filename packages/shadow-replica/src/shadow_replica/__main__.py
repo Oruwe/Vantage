@@ -37,6 +37,7 @@ def import_dev(
     developer_id: Annotated[str, typer.Argument(help="Developer ID from vantage-ghost subscribers list")],
     name: Annotated[str, typer.Option("--name", "-n")] = "",
     token: Annotated[str, typer.Option("--token", "-t")] = "",
+    subscriber_id: Annotated[str, typer.Option("--subscriber-id", "-s", help="Subscriber ID printed by vantage-ghost subscribers add")] = "",
     config: Annotated[str, typer.Option("--config")] = "",
 ):
     """Register a dev as a trusted source. Run once with the token they gave you."""
@@ -53,9 +54,12 @@ def import_dev(
         developer_id=developer_id,
         name=name,
         token_value=token,
+        subscriber_id=subscriber_id,
         path=cfg_path,
     )
     typer.echo(f"Developer {name!r} ({developer_id}) registered as trusted.")
+    if subscriber_id:
+        typer.echo(f"Subscriber ID: {subscriber_id} (used for live-probe policy lookup).")
     typer.echo("Run 'shadow-replica serve' to start accepting artifacts.")
 
 

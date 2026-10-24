@@ -75,6 +75,17 @@ class Config:
         return self.vantage_dir / "vantage.db"
 
     @property
+    def machine_id(self) -> str:
+        """Persistent UUID identifying this machine. Created on first access."""
+        mid_file = self.state_dir / "machine_id"
+        if mid_file.exists():
+            return mid_file.read_text(encoding="utf-8").strip()
+        mid = str(uuid.uuid4())
+        mid_file.parent.mkdir(parents=True, exist_ok=True)
+        mid_file.write_text(mid, encoding="utf-8")
+        return mid
+
+    @property
     def resolved_session_dirs(self) -> list[Path]:
         if self.session_dirs:
             return [Path(p).expanduser() for p in self.session_dirs]
