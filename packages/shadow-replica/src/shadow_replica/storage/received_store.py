@@ -100,8 +100,7 @@ class ReceivedStore:
         )
 
         if not self._ensure_client():
-            if not any(r.approval_id == approval_id for r in self._fallback):
-                self._fallback.append(row)
+            self._fallback_upsert(row)
             return
 
         try:
@@ -109,8 +108,7 @@ class ReceivedStore:
             self._upsert_point(row, vector)
         except Exception as exc:
             logger.warning("Qdrant save failed (%s) — buffering in memory", exc)
-            if not any(r.approval_id == approval_id for r in self._fallback):
-                self._fallback.append(row)
+            self._fallback_upsert(row)
 
     def save(
         self,
@@ -135,15 +133,26 @@ class ReceivedStore:
             received_at=received_at,
         )
         if not self._ensure_client():
-            if not any(r.approval_id == approval_id for r in self._fallback):
-                self._fallback.append(row)
+            self._fallback_upsert(row)
             return
         try:
             self._upsert_point(row, [0.0] * _VECTOR_SIZE)
         except Exception as exc:
             logger.warning("Qdrant sync save failed (%s)", exc)
-            if not any(r.approval_id == approval_id for r in self._fallback):
-                self._fallback.append(row)
+            self._fallback_upsert(row)
+
+    def _fallback_upsert(self, row: ReceivedArtifactRow) -> None:
+        """Replace an existing in-memory row by approval_id, or append if new.
+
+        Reactive follow-ups re-save a GithubEvent under the same approval_id to
+        attach the dev's live session context — this upsert makes that visible
+        in the dashboard whether Qdrant is up or not.
+        """
+        for i, existing in enumerate(self._fallback):
+            if existing.approval_id == row.approval_id:
+                self._fallback[i] = row
+                return
+        self._fallback.append(row)
 
     def _upsert_point(self, row: ReceivedArtifactRow, vector: list[float]) -> None:
         from qdrant_client.models import PointStruct
@@ -325,6 +334,132 @@ class ReceivedStore:
         except Exception:
             return 0
 
+    async def list_recent_with_vectors(
+        self,
+        hours: int = 48,
+        limit: int = 200,
+    ) -> list[tuple["ReceivedArtifactRow", list[float]]]:
+        """Return recent rows paired with their embedding vectors.
+
+        Used by the semantic collision detector to compute pairwise cosine
+        similarity in Python. When Qdrant is unavailable, falls back to the
+        in-memory store and (re-)embeds rows on the fly via the configured
+        embedder — degrades to zero-vectors (no matches will clear threshold)
+        if neither Qdrant nor embedder is available.
+        """
+        from datetime import datetime, timedelta, timezone
+
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=max(1, hours))
+
+        def _in_window(row) -> bool:
+            if not row.received_at:
+                return False
+            try:
+                s = row.received_at
+                s = s.replace("Z", "+00:00") if s.endswith("Z") else s
+                dt = datetime.fromisoformat(s)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                return dt >= cutoff
+            except Exception:
+                return False
+
+        if not self._ensure_client():
+            rows = [r for r in self._fallback if _in_window(r)]
+            rows.sort(key=lambda r: r.received_at, reverse=True)
+            rows = rows[:limit]
+            out: list[tuple[ReceivedArtifactRow, list[float]]] = []
+            for row in rows:
+                if self._embedder is not None:
+                    try:
+                        vec = await self._embed_row(row)
+                    except Exception:
+                        vec = [0.0] * _VECTOR_SIZE
+                else:
+                    vec = [0.0] * _VECTOR_SIZE
+                out.append((row, vec))
+            return out
+
+        try:
+            # Pull points newest-first until we've either collected `limit` or
+            # fallen past the cutoff. Qdrant scroll has no "order by payload",
+            # so we grab a generous batch and filter in Python.
+            batch_cap = min(max(limit * 5, 500), 5000)
+            results, _ = self._client.scroll(  # type: ignore[union-attr]
+                collection_name=_COLLECTION,
+                limit=batch_cap,
+                with_payload=True,
+                with_vectors=True,
+            )
+            paired: list[tuple[ReceivedArtifactRow, list[float]]] = []
+            for p in results:
+                row = _point_to_row(p)
+                if not _in_window(row):
+                    continue
+                vec = list(p.vector) if p.vector is not None else [0.0] * _VECTOR_SIZE
+                paired.append((row, vec))
+            paired.sort(key=lambda rv: rv[0].received_at, reverse=True)
+            return paired[:limit]
+        except Exception as exc:
+            logger.warning("Qdrant list_recent_with_vectors failed: %s", exc)
+            return []
+
+    def reassign_developer_id(self, from_id: str, to_id: str) -> int:
+        """Reattribute all artifacts stored under `from_id` to `to_id`.
+
+        Used when a developer is paired with a `github_login` after webhook
+        events have already arrived under `unmapped:<login>`. Returns the
+        number of rows reassigned.
+        """
+        if not from_id or not to_id or from_id == to_id:
+            return 0
+
+        count = 0
+        # In-memory fallback: direct mutate.
+        for row in self._fallback:
+            if row.developer_id == from_id:
+                row.developer_id = to_id
+                count += 1
+
+        if not self._ensure_client():
+            return count
+
+        try:
+            from qdrant_client.models import Filter, FieldCondition, MatchValue, PointStruct
+
+            offset = None
+            while True:
+                results, next_offset = self._client.scroll(  # type: ignore[union-attr]
+                    collection_name=_COLLECTION,
+                    scroll_filter=Filter(
+                        must=[FieldCondition(key="developer_id", match=MatchValue(value=from_id))]
+                    ),
+                    limit=256,
+                    offset=offset,
+                    with_payload=True,
+                    with_vectors=True,
+                )
+                if not results:
+                    break
+                points = []
+                for point in results:
+                    payload = dict(point.payload or {})
+                    payload["developer_id"] = to_id
+                    vector = point.vector if point.vector is not None else [0.0] * _VECTOR_SIZE
+                    points.append(PointStruct(id=point.id, vector=_fit(vector), payload=payload))
+                if points:
+                    self._client.upsert(  # type: ignore[union-attr]
+                        collection_name=_COLLECTION,
+                        points=points,
+                    )
+                    count += len(points)
+                if next_offset is None:
+                    break
+                offset = next_offset
+        except Exception as exc:
+            logger.warning("Qdrant reassign_developer_id failed: %s", exc)
+        return count
+
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -361,6 +496,12 @@ def _artifact_text(artifact_type: str, payload: dict) -> str:
                 f"{payload.get('title', '')} "
                 f"{payload.get('summary', '')} "
                 f"{payload.get('rationale', '')}"
+            )
+        if artifact_type == "github_event":
+            return (
+                f"{payload.get('summary', '')} "
+                f"{payload.get('title', '')} "
+                f"{payload.get('raw_payload_excerpt', '')}"
             )
     except Exception:
         pass

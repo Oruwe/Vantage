@@ -1,15 +1,16 @@
 {% extends "base.html" %}
 {% block title %}Audit Log{% endblock %}
+{% set active_page = 'audit' %}
 {% block content %}
 <h1>Audit Log</h1>
-<form method="get" style="margin-bottom:1.25rem; display:flex; gap:0.5rem; align-items:center;">
-  <label style="font-size:0.85rem; color:#a1a1aa;">Show last</label>
-  <select name="days" onchange="this.form.submit()" style="background:#18181b; border:1px solid #3f3f46; color:#e2e2e5; border-radius:4px; padding:0.25rem 0.5rem;">
+<form method="get" style="margin-bottom:1.25rem; display:flex; gap:0.6rem; align-items:center;">
+  <label style="font-size:0.85rem; color:var(--tx2);">Window:</label>
+  <select name="days" onchange="this.form.submit()" style="background:var(--sf2); border:1px solid var(--bd); color:var(--tx); border-radius:6px; padding:0.3rem 0.6rem; font-family:inherit;font-size:0.85rem">
     {% for d in [1, 3, 7, 14, 30] %}
     <option value="{{ d }}" {% if d == days %}selected{% endif %}>{{ d }} day{% if d != 1 %}s{% endif %}</option>
     {% endfor %}
   </select>
-  <span class="meta">— {{ entries | length }} entries</span>
+  <span class="meta">· {{ entries | length }} entries</span>
 </form>
 
 {% if entries %}
@@ -28,17 +29,26 @@
   <tbody>
   {% for e in entries | sort(attribute='ts', reverse=True) %}
   <tr>
-    <td style="white-space:nowrap; font-size:0.78rem; color:#71717a;">{{ e.ts.strftime('%m-%d %H:%M') }}</td>
-    <td><span class="badge badge-pending">{{ e.kind }}</span></td>
-    <td style="font-family:monospace; font-size:0.78rem;">{{ e.model }}</td>
+    <td style="white-space:nowrap; font-size:0.78rem; color:var(--tx3); font-family:var(--mono);">
+      {{ e.ts.strftime('%m-%d %H:%M') }}
+    </td>
+    <td><span class="badge badge-pending" style="animation:none">{{ e.kind }}</span></td>
+    <td style="font-family:var(--mono); font-size:0.78rem; color:var(--tx2);">{{ e.model }}</td>
     <td class="redaction">
       {% if e.redactions %}
-        {{ e.redactions | map(attribute='kind') | list | unique | join(', ') }}
-        ({{ e.redactions | length }})
-      {% else %}—{% endif %}
+        {% set kinds = e.redactions | map(attribute='kind') | list | unique | list %}
+        {% for k in kinds %}
+        <span class="badge" style="background:var(--ambg);color:var(--am);border:1px solid var(--ambd);font-size:0.65rem;padding:1px 6px;margin-right:3px;animation:none">
+          🔒 {{ k | replace('_', ' ') }}
+        </span>
+        {% endfor %}
+        <span style="color:var(--tx3);font-size:0.72rem;font-family:var(--mono)">×{{ e.redactions | length }}</span>
+      {% else %}
+        <span style="color:var(--tx3)">—</span>
+      {% endif %}
     </td>
-    <td style="font-size:0.78rem;">{{ e.approval_source.value }}</td>
-    <td style="font-size:0.78rem; color:#71717a;">{{ e.destination or '—' }}</td>
+    <td style="font-size:0.78rem; color:var(--tx2); font-family:var(--mono);">{{ e.approval_source.value }}</td>
+    <td style="font-size:0.78rem; color:var(--tx3);">{{ e.destination or '—' }}</td>
   </tr>
   {% endfor %}
   </tbody>

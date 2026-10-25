@@ -1,49 +1,169 @@
 {% extends "base.html" %}
 {% block title %}Pending Drafts{% endblock %}
+{% set active_page = 'drafts' %}
 {% block content %}
-<h1>Pending Drafts</h1>
+<h1>
+  Pending Drafts
+  <span style="color:var(--tx3);font-weight:400;font-size:0.9rem;margin-left:0.5rem">
+    {{ drafts|length }} queued
+  </span>
+</h1>
+
 {% if drafts %}
+<div id="draft-list">
   {% for d in drafts %}
-  <div class="card">
-    <div style="display:flex; justify-content:space-between; align-items:center;">
-      <div>
-        <span class="badge badge-pending">{{ d.artifact_type | replace('_', ' ') | title }}</span>
-        <span class="meta" style="margin-left:0.5rem;">{{ d.period_start[:10] }}</span>
+  <div class="card draft-card" data-draft-id="{{ d.draft_id }}" data-idx="{{ loop.index0 }}" tabindex="-1">
+    <div style="display:flex; justify-content:space-between; align-items:center; gap:1rem;">
+      <div style="min-width:0;flex:1">
+        <span class="badge badge-pending">{{ d.artifact_type | replace('_', ' ') }}</span>
+        <span class="meta" style="margin-left:0.6rem;">{{ d.period_start[:10] }}</span>
       </div>
-      <div style="font-size:0.78rem; color:#52525b;">{{ d.created_at[:16] }}</div>
+      <div style="font-size:0.78rem; color:var(--tx3); font-family:var(--mono);">
+        {{ d.created_at[:16] }}
+      </div>
     </div>
-    <div class="actions" style="margin-top:0.75rem;">
-      <a href="/draft/{{ d.draft_id }}"><button class="btn-secondary">Review &amp; Edit</button></a>
+    <div class="actions" style="margin-top:0.85rem;">
+      <a href="/draft/{{ d.draft_id }}"><button type="button" class="btn-secondary">
+        Review <span class="kbd">e</span>
+      </button></a>
       <form method="post" action="/draft/{{ d.draft_id }}/approve" style="display:inline;">
         <input type="hidden" name="edited_json" value="">
-        <button type="submit" class="btn-approve">Quick Approve</button>
+        <button type="submit" class="btn-approve">
+          Approve <span class="kbd">a</span>
+        </button>
       </form>
       <form method="post" action="/draft/{{ d.draft_id }}/reject" style="display:inline;">
-        <button type="submit" class="btn-reject">Reject</button>
+        <button type="submit" class="btn-reject">
+          Reject <span class="kbd">r</span>
+        </button>
       </form>
+      <a href="/draft/{{ d.draft_id }}/xray">
+        <button type="button" class="btn-ghost" title="Redaction X-Ray">🔒 X-Ray <span class="kbd">x</span></button>
+      </a>
     </div>
   </div>
   {% endfor %}
+</div>
 {% else %}
-  <div class="empty">No pending drafts. Run <code>vantage-ghost digest</code>, <code>vantage-ghost standup</code>, or <code>vantage-ghost pr-draft</code> to generate one.</div>
+<div class="empty">
+  <div style="font-size:2.5rem;opacity:0.3;margin-bottom:0.5rem">⟡</div>
+  <div style="font-size:0.95rem;color:var(--tx2);margin-bottom:0.5rem">All clear</div>
+  <div style="font-size:0.85rem;line-height:1.5">
+    No pending drafts. Run <code>vantage-ghost digest</code>, <code>vantage-ghost standup</code>,
+    or <code>vantage-ghost pr-draft</code> to generate one.
+  </div>
+</div>
 {% endif %}
 
 {% if recent %}
-<h2 style="margin-top:2rem; font-size:1rem; color:#71717a; font-weight:500;">Recent</h2>
+<h2 style="margin-top:2.5rem;">Recent</h2>
 {% for d in recent %}
-<div class="card" style="opacity:0.75;">
+<div class="card" style="opacity:0.65;">
   <div style="display:flex; justify-content:space-between; align-items:center;">
-    <div>
-      <span class="badge badge-{{ d.status }}">{{ d.status | title }}</span>
-      <span style="margin-left:0.5rem; font-size:0.9rem;">{{ d.artifact_type | replace('_', ' ') | title }}</span>
+    <div style="min-width:0;flex:1">
+      <span class="badge badge-{{ d.status }}">{{ d.status }}</span>
+      <span style="margin-left:0.5rem; font-size:0.9rem; color:var(--tx2);">
+        {{ d.artifact_type | replace('_', ' ') | title }}
+      </span>
       <span class="meta" style="margin-left:0.5rem;">{{ d.period_start[:10] }}</span>
     </div>
-    <div style="font-size:0.78rem; color:#52525b;">{{ (d.reviewed_at or d.created_at)[:16] }}</div>
+    <div style="font-size:0.78rem; color:var(--tx3); font-family:var(--mono);">
+      {{ (d.reviewed_at or d.created_at)[:16] }}
+    </div>
   </div>
   <div style="margin-top:0.5rem;">
-    <a href="/draft/{{ d.draft_id }}"><button class="btn-secondary" style="font-size:0.8rem; padding:0.25rem 0.75rem;">View</button></a>
+    <a href="/draft/{{ d.draft_id }}">
+      <button class="btn-ghost" style="font-size:0.78rem; padding:0.3rem 0.65rem;">View</button>
+    </a>
   </div>
 </div>
 {% endfor %}
 {% endif %}
+
+<div class="kb-hints">
+  <span><span class="kbd">j</span><span class="kbd">k</span> navigate</span>
+  <span><span class="kbd">a</span> approve</span>
+  <span><span class="kbd">r</span> reject</span>
+  <span><span class="kbd">e</span> edit</span>
+  <span><span class="kbd">x</span> x-ray</span>
+  <span><span class="kbd">?</span> help</span>
+</div>
+
+<script>
+/* ── Keyboard-first draft navigation ─────────────────────── */
+(() => {
+  const cards = Array.from(document.querySelectorAll('.draft-card'));
+  if (!cards.length) return;
+  let idx = 0;
+  function focus(i) {
+    cards.forEach(c => c.classList.remove('focused'));
+    idx = Math.max(0, Math.min(cards.length - 1, i));
+    const c = cards[idx];
+    c.classList.add('focused');
+    c.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+  focus(0);
+
+  function current() { return cards[idx]; }
+
+  async function submitForm(action) {
+    const card = current();
+    if (!card) return;
+    const draftId = card.dataset.draftId;
+    const form = card.querySelector(`form[action$="/${action}"]`);
+    if (form) {
+      form.submit();
+    }
+  }
+
+  document.addEventListener('keydown', (e) => {
+    if (e.target.matches('input, textarea, select')) return;
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    switch (e.key) {
+      case 'j': case 'ArrowDown':
+        e.preventDefault(); focus(idx + 1); break;
+      case 'k': case 'ArrowUp':
+        e.preventDefault(); focus(idx - 1); break;
+      case 'g':
+        // Handled by base.html for chords (g d / g a). Skip here.
+        break;
+      case 'G':
+        e.preventDefault(); focus(cards.length - 1); break;
+      case 'a':
+        e.preventDefault(); submitForm('approve'); break;
+      case 'r':
+        e.preventDefault();
+        if (confirm('Reject this draft?')) submitForm('reject');
+        break;
+      case 'e': case 'Enter':
+        e.preventDefault();
+        const draftId = current()?.dataset.draftId;
+        if (draftId) location.href = `/draft/${draftId}`;
+        break;
+      case 'x':
+        e.preventDefault();
+        const dx = current()?.dataset.draftId;
+        if (dx) location.href = `/draft/${dx}/xray`;
+        break;
+      case '?':
+        e.preventDefault();
+        alert([
+          'KEYBOARD SHORTCUTS',
+          '',
+          'j / ↓ – next draft',
+          'k / ↑ – previous draft',
+          'G     – last draft',
+          'a     – approve current',
+          'r     – reject current (confirms)',
+          'e / ⏎ – review & edit',
+          'x     – redaction x-ray',
+          'g d   – go to drafts',
+          'g a   – go to audit',
+          'g s   – go to subscribers',
+        ].join('\n'));
+        break;
+    }
+  });
+})();
+</script>
 {% endblock %}

@@ -10,15 +10,19 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 
 from shadow_replica.agent.subscriber_agent import SubscriberAgent
 from shadow_replica.api.dashboard import make_router as make_dashboard_router
+from shadow_replica.api.github_webhook import make_router as make_github_webhook_router
 from shadow_replica.api.probe import make_router as make_probe_router
 from shadow_replica.api.receive import make_router as make_receive_router
 from shadow_replica.api.timeline import make_router as make_timeline_router
 from shadow_replica.api.ui_api import make_ui_router
+from shadow_replica.api.wiretap import make_router as make_wiretap_router
 from shadow_replica.auth.token_verify import verify_request
+from shadow_replica.collision.detector import CollisionDetector
 from shadow_replica.config import ReplicaConfig
 from shadow_replica.connections.ws_hub import WSHub
 from shadow_replica.models.embedder import Embedder
 from shadow_replica.storage.received_store import ReceivedStore
+from shadow_replica.wiretap.bus import WiretapBus
 
 _STATIC_DIR = Path(__file__).parent / "static"
 
@@ -88,18 +92,31 @@ def build_app(cfg: ReplicaConfig) -> FastAPI:
         qdrant_url=cfg.qdrant.url,
         embedder=embedder,
     )
-    hub = WSHub()
+    bus = WiretapBus()
+    collision = CollisionDetector()
+    hub = WSHub(bus=bus, collision=collision)
 
     llm = _build_llm(cfg) if cfg.llm.provider.strip() else None
     agent = SubscriberAgent(store, llm=llm, embedder=embedder)
 
+    # Manager agent (M13) — tool-calling investigation surface. Requires
+    # provider=anthropic + ANTHROPIC_API_KEY; otherwise /ui/api/chat 503s.
+    from shadow_replica.agent.chat_memory import ChatMemory
+    from shadow_replica.agent.manager_agent import build_manager_agent
+    from shadow_replica.agent.tools import ToolContext
+    chat_memory = ChatMemory(cfg.config_dir / "chat_memory.db")
+    tool_ctx = ToolContext(store=store, hub=hub, cfg=cfg, agent=agent)
+    manager_agent = build_manager_agent(tool_ctx, chat_memory, cfg, bus=bus)
+
     app = FastAPI(title="Vantage Shadow Replica", docs_url="/docs", redoc_url=None)
 
-    app.include_router(make_receive_router(store, cfg.trusted_devs, notifications=cfg.notifications))
+    app.include_router(make_receive_router(store, cfg.trusted_devs, bus=bus, notifications=cfg.notifications))
     app.include_router(make_timeline_router(store, cfg.trusted_devs))
-    app.include_router(make_probe_router(hub, store, cfg.trusted_devs))
+    app.include_router(make_probe_router(hub, store, cfg.trusted_devs, bus=bus))
     app.include_router(make_dashboard_router(store, cfg.trusted_devs))
-    app.include_router(make_ui_router(store, hub, cfg, agent=agent))
+    app.include_router(make_ui_router(store, hub, cfg, agent=agent, bus=bus, manager_agent=manager_agent))
+    app.include_router(make_wiretap_router(bus, cfg))
+    app.include_router(make_github_webhook_router(cfg, store, bus=bus, notifications=cfg.notifications, hub=hub))
 
     @app.get("/", include_in_schema=False)
     async def serve_dashboard():

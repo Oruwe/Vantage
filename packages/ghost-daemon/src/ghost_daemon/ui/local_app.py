@@ -19,8 +19,38 @@ from vantage.schemas import ApprovalSource, Channel
 
 if TYPE_CHECKING:
     from ghost_daemon.config import Config
+    from ghost_daemon.daemon import PairingStatus
     from ghost_daemon.models.registry import LLMProvider
     from ghost_daemon.subscribers.registry import SubscriberRegistry
+
+
+# Per-kind preview shapes for the Raw X-Ray pane. Each entry is a
+# fixed-length visual that mimics the look of the original secret so a human
+# can tell at a glance "that was an AWS key" vs "that was a JWT". The actual
+# secret value is never persisted — only this stylized placeholder is shown.
+_RAW_KIND_SHAPES: dict[str, str] = {
+    "aws_access_key":  "AKIA" + "▪" * 16,
+    "aws_secret_key":  "▪" * 40,
+    "github_token":    "ghp_" + "▪" * 36,
+    "gitlab_token":    "glpat-" + "▪" * 20,
+    "slack_token":     "xoxb-" + "▪" * 24,
+    "anthropic_key":   "sk-ant-" + "▪" * 24,
+    "openai_key":      "sk-" + "▪" * 32,
+    "stripe_live":     "sk_live_" + "▪" * 24,
+    "gcp_api_key":     "AIza" + "▪" * 35,
+    "azure_acct_key":  "AccountKey=" + "▪" * 44,
+    "jwt":             "eyJ▪▪▪.eyJ▪▪▪▪▪▪▪▪.▪▪▪▪▪▪▪▪",
+    "basic_auth_url":  "https://▪▪▪▪:▪▪▪▪@host.example",
+    "bearer_token":    "Bearer " + "▪" * 32,
+    "dotenv_secret":   "VAR=" + "▪" * 20,
+    "private_key":     "-----BEGIN PRIVATE KEY-----\n" + "▪" * 48 + "\n-----END PRIVATE KEY-----",
+    "high_entropy":    "▪" * 24,
+}
+
+
+def _raw_shape_for(kind: str) -> str:
+    """Return a visual placeholder for the Raw pane in the X-Ray view."""
+    return _RAW_KIND_SHAPES.get(kind, "▪" * 16)
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +77,7 @@ def build_app(
     cfg: "Config",
     qdrant: QdrantStore | None = None,
     llm: "LLMProvider | None" = None,
+    pairing_status: "PairingStatus | None" = None,
 ) -> FastAPI:
     app = FastAPI(title="Vantage", docs_url=None, redoc_url=None)
 
@@ -82,6 +113,76 @@ def build_app(
             payload=payload,
             payload_json=json.dumps(payload, indent=2),
             status=row.status,
+        ))
+
+    @app.get("/draft/{draft_id}/xray", response_class=HTMLResponse)
+    async def view_draft_xray(request: Request, draft_id: str):
+        row = store.get_draft(draft_id)
+        if not row:
+            return HTMLResponse("<p>Draft not found.</p>", status_code=404)
+        import html as _html
+        import re
+        payload = json.loads(row.edited_payload_json or row.payload_json)
+        payload_json = json.dumps(payload, indent=2)
+        token_re = re.compile(r"\[REDACTED:([a-zA-Z0-9_\-]+):([a-zA-Z0-9]+)\]")
+        tokens = token_re.findall(payload_json)
+        kind_counts: dict[str, int] = {}
+        for kind, _fp in tokens:
+            kind_counts[kind] = kind_counts.get(kind, 0) + 1
+
+        escaped = _html.escape(payload_json)
+
+        def _hl_scrubbed(match):
+            kind = match.group(1)
+            fp = match.group(2)
+            # Wrap the token in a styled chip with the pulsing lock badge.
+            return (
+                f'<span class="xr-tok" data-kind="{kind}" '
+                f'title="{kind} · fingerprint {fp}">'
+                f'<svg class="xr-lock" viewBox="0 0 24 24" width="11" height="11" aria-hidden="true">'
+                f'<path d="M6 10V7a6 6 0 0 1 12 0v3" fill="none" stroke="currentColor" stroke-width="2"/>'
+                f'<rect x="4" y="10" width="16" height="11" rx="2" fill="currentColor" opacity=".18"/>'
+                f'<rect x="4" y="10" width="16" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="2"/>'
+                f'<circle cx="12" cy="15.5" r="1.6" fill="currentColor"/>'
+                f'</svg>'
+                f'<span class="xr-tok-kind">{kind}</span>'
+                f'<span class="xr-tok-fp">{fp}</span>'
+                f'</span>'
+            )
+
+        def _hl_raw(match):
+            kind = match.group(1)
+            shape = _html.escape(_raw_shape_for(kind))
+            return (
+                f'<span class="xr-raw" data-kind="{kind}" '
+                f'title="This is where the original secret lived — never persisted">'
+                f'{shape}</span>'
+            )
+
+        # Escape JSON once, then substitute the (now-escaped) token pattern.
+        escaped_token_re = re.compile(r"\[REDACTED:([a-zA-Z0-9_\-]+):([a-zA-Z0-9]+)\]")
+        scrubbed_html = escaped_token_re.sub(_hl_scrubbed, escaped)
+        raw_html = escaped_token_re.sub(_hl_raw, escaped)
+
+        turn_count = 0
+        if isinstance(payload, dict):
+            for key in ("highlights", "today", "yesterday", "blockers", "files_touched"):
+                v = payload.get(key)
+                if isinstance(v, list):
+                    turn_count += len(v)
+        return HTMLResponse(_render(
+            "xray.html",
+            request=request,
+            draft_id=draft_id,
+            artifact_type=row.artifact_type,
+            status=row.status,
+            payload_json=payload_json,
+            scrubbed_html=scrubbed_html,
+            raw_html=raw_html,
+            tokens=len(tokens),
+            kind_counts=sorted(kind_counts.items(), key=lambda x: -x[1]),
+            payload_bytes=len(payload_json),
+            turn_count=turn_count,
         ))
 
     @app.post("/draft/{draft_id}/approve")
@@ -134,6 +235,38 @@ def build_app(
                 "revoked": r.revoked_at is not None,
             }
             for r in rows
+        ])
+
+    @app.get("/api/pairing-status")
+    async def api_pairing_status():
+        """Live WS connection state for each subscriber with live_probe enabled.
+
+        Powers the connection pill in the local UI header. Returns an empty
+        list when no subscribers have live_probe enabled (nothing to connect).
+        """
+        if pairing_status is None:
+            return JSONResponse([])
+        snap = pairing_status.snapshot()
+        total = len(snap)
+        connected = sum(1 for s in snap if s["connected"])
+        return JSONResponse({
+            "total": total,
+            "connected": connected,
+            "subscribers": snap,
+        })
+
+    @app.get("/api/pending-drafts")
+    async def api_pending_drafts():
+        """Lightweight JSON view of the pending queue — used by keyboard nav JS."""
+        pending = gate.list_pending()  # list of dicts, not models
+        return JSONResponse([
+            {
+                "draft_id": d.get("draft_id", ""),
+                "artifact_type": d.get("artifact_type", ""),
+                "period_start": (d.get("period_start") or "")[:10],
+                "created_at": (d.get("created_at") or "")[:16],
+            }
+            for d in pending
         ])
 
     # ── API endpoints ──────────────────────────────────────────────────────────

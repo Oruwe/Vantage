@@ -413,8 +413,121 @@ def check():
         raise typer.Exit(1)
 
 
+def _infer_github_login() -> str:
+    """Best-effort guess at the local user's GitHub login from `git config`.
+
+    Preferred source: `git config github.user` (if the user set it explicitly).
+    Fallback: strip @ from `user.email` when it looks like `<handle>@users.noreply.github.com`.
+    Returns "" when nothing confident is available.
+    """
+    import subprocess
+
+    def _git(*args: str) -> str:
+        try:
+            out = subprocess.run(
+                ["git", "config", "--get", *args],
+                capture_output=True, text=True, timeout=2,
+            )
+            return (out.stdout or "").strip() if out.returncode == 0 else ""
+        except Exception:
+            return ""
+
+    explicit = _git("github.user")
+    if explicit:
+        return explicit
+    email = _git("user.email")
+    if email.endswith("@users.noreply.github.com"):
+        local = email.split("@", 1)[0]
+        # GitHub noreply emails are like "12345678+alice@…" — strip the id prefix.
+        if "+" in local:
+            local = local.split("+", 1)[1]
+        return local
+    return ""
+
+
+def _build_pairing_code(cfg, identity, github_login: str = "") -> str:
+    """Encode a developer→manager pairing blob as base64url(json)."""
+    import base64
+    import json as _json
+
+    blob = {
+        "v": 1,
+        "developer_id": cfg.developer_id,
+        "name": cfg.display_name or cfg.developer_id,
+        "subscriber_id": identity.subscriber_id,
+        "token": identity.token_value,
+        "receive_url": identity.receive_url,
+    }
+    gh = github_login or _infer_github_login()
+    if gh:
+        blob["github_login"] = gh
+    raw = _json.dumps(blob, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+
+
+@app.command("pair")
+def pair_command(
+    receive_url: Annotated[str, typer.Argument(help="Manager's shadow-replica URL, e.g. http://manager-host:7475")],
+    name: Annotated[str, typer.Option("--name", "-n", help="How the manager should label you")] = "",
+    github_login: Annotated[str, typer.Option("--github-login", "-g", help="Your GitHub username (for webhook attribution). Auto-detected from git config if omitted.")] = "",
+    channels: Annotated[list[str], typer.Option("--channels", "-c", help="Channels to share (default: all common ones)")] = [
+        "weekly_digest", "commit_report", "standup", "pr_draft", "quick_note", "bug_resolution",
+    ],
+):
+    """Create a subscriber and print a one-string pairing code for the manager.
+
+    This is the easy path: run this, give the manager the printed code, and they
+    paste it into their dashboard's 'Add Developer' dialog. No tokens to copy
+    separately, no restart on their side.
+    """
+    from ghost_daemon import config as _cfg_mod
+    from ghost_daemon.subscribers.registry import SubscriberRegistry
+    from vantage.schemas import Channel
+
+    cfg = _cfg_mod.load()
+    registry = SubscriberRegistry(cfg.sqlite_path)
+
+    label = (name or cfg.display_name or cfg.developer_id)
+    try:
+        parsed_channels = [Channel(c) for c in channels]
+    except ValueError as exc:
+        typer.echo(f"Unknown channel: {exc}", err=True)
+        raise typer.Exit(1)
+
+    identity = registry.add(label, receive_url, parsed_channels)
+    inferred = github_login or _infer_github_login()
+    code = _build_pairing_code(cfg, identity, github_login=inferred)
+
+    typer.echo(f"\nSubscriber created ({identity.subscriber_id}). Give the manager this code:\n")
+    typer.echo(f"  {code}\n")
+    if inferred:
+        typer.echo(f"GitHub login carried in code: {inferred}")
+    else:
+        typer.echo("No GitHub login detected (run with --github-login <handle> if you want PR events attributed to you).")
+    typer.echo(f"They paste it into {receive_url.rstrip('/')}/ → 'Add Developer'.")
+
+
 subscribers_app = typer.Typer(help="Manage subscribers — who receives your approved artifacts.")
 app.add_typer(subscribers_app, name="subscribers")
+
+
+@subscribers_app.command("pair")
+def subscribers_pair(
+    subscriber: Annotated[str, typer.Argument(help="Existing subscriber ID or name")],
+):
+    """Print a one-string pairing code for an existing subscriber (no new token issued)."""
+    from ghost_daemon import config as _cfg_mod
+    from ghost_daemon.subscribers.registry import SubscriberRegistry
+
+    cfg = _cfg_mod.load()
+    registry = SubscriberRegistry(cfg.sqlite_path)
+    row = registry.get(subscriber) or registry.get_by_name(subscriber)
+    if not row:
+        typer.echo(f"Subscriber {subscriber!r} not found.", err=True)
+        raise typer.Exit(1)
+    identity = registry.to_identity(row)
+    code = _build_pairing_code(cfg, identity)
+    typer.echo(code)
 
 
 @subscribers_app.command("add")
@@ -448,11 +561,15 @@ def subscribers_add(
     typer.echo(f"  ID         : {identity.subscriber_id}")
     typer.echo(f"  Channels   : {', '.join(c.value for c in identity.channels)}")
     typer.echo(f"  Receive URL: {identity.receive_url}")
-    typer.echo(f"\nToken (give this to {name} — store it securely):")
-    typer.echo(f"  {identity.token_value}")
-    typer.echo(f"\nThey should run:")
-    typer.echo(f"  shadow-replica import-dev {cfg.developer_id} --name \"{cfg.display_name or cfg.developer_id}\" --token {identity.token_value}")
-    typer.echo(f"  shadow-replica serve")
+
+    code = _build_pairing_code(cfg, identity)
+    typer.echo(f"\n── One-click pairing code ─────────────────────────────────────")
+    typer.echo(f"Give {name} this single string. They paste it into their dashboard")
+    typer.echo(f"under 'Add Developer':")
+    typer.echo(f"")
+    typer.echo(f"  {code}")
+    typer.echo(f"")
+    typer.echo(f"(Advanced: or run `shadow-replica import-dev {cfg.developer_id} --name \"{cfg.display_name or cfg.developer_id}\" --token {identity.token_value}`)")
 
 
 @subscribers_app.command("list")

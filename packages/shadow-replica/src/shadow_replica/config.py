@@ -45,6 +45,17 @@ class TrustedDev:
     name: str
     token_value: str  # vsub_... bearer token from the dev
     subscriber_id: str = ""  # sub_... ID on the dev's side (needed for probe policy lookup)
+    github_login: str = ""   # GitHub username for webhook event attribution
+
+
+@dataclass
+class WatchedRepo:
+    """A GitHub repo whose webhooks the replica is willing to receive."""
+    slug: str                      # "owner/name"
+    secret: str                    # per-repo webhook secret (whsec_…)
+    created_at: str = ""
+    last_event_at: str = ""        # ISO timestamp of the most recent delivery
+    event_count: int = 0
 
 
 @dataclass
@@ -54,6 +65,7 @@ class ReplicaConfig:
     bind_port: int = 7475
     manager_token: str = ""
     trusted_devs: list[TrustedDev] = field(default_factory=list)
+    watched_repos: list[WatchedRepo] = field(default_factory=list)
     notifications: list[NotificationConfig] = field(default_factory=list)
     qdrant: QdrantConfig = field(default_factory=QdrantConfig)
     embeddings: EmbeddingsConfig = field(default_factory=EmbeddingsConfig)
@@ -85,8 +97,20 @@ def load(path: Path | None = None) -> ReplicaConfig:
             name=d.get("name", d["developer_id"]),
             token_value=d["token_value"],
             subscriber_id=d.get("subscriber_id", ""),
+            github_login=d.get("github_login", ""),
         )
         for d in data.get("trusted_devs", [])
+    ]
+
+    watched_repos = [
+        WatchedRepo(
+            slug=r["slug"],
+            secret=r["secret"],
+            created_at=r.get("created_at", ""),
+            last_event_at=r.get("last_event_at", ""),
+            event_count=int(r.get("event_count", 0)),
+        )
+        for r in data.get("watched_repos", [])
     ]
 
     notifications = [
@@ -120,6 +144,7 @@ def load(path: Path | None = None) -> ReplicaConfig:
         bind_port=data.get("bind_port", 7475),
         manager_token=manager_token,
         trusted_devs=trusted_devs,
+        watched_repos=watched_repos,
         notifications=notifications,
         qdrant=QdrantConfig(
             url=qdrant_data.get("url", "http://localhost:6333"),
@@ -147,6 +172,7 @@ def add_trusted_dev(
     name: str,
     token_value: str,
     subscriber_id: str = "",
+    github_login: str = "",
     path: Path | None = None,
 ) -> Path:
     """Add a trusted dev to the replica config TOML and return the config path."""
@@ -161,6 +187,8 @@ def add_trusted_dev(
             dev.name = name
             if subscriber_id:
                 dev.subscriber_id = subscriber_id
+            if github_login:
+                dev.github_login = github_login
             updated = True
             break
     if not updated:
@@ -169,10 +197,42 @@ def add_trusted_dev(
             name=name,
             token_value=token_value,
             subscriber_id=subscriber_id,
+            github_login=github_login,
         ))
 
     _write(cfg, config_path)
     return config_path
+
+
+def add_watched_repo(slug: str, secret: str, path: Path | None = None) -> Path:
+    """Register a GitHub repo to accept webhook deliveries from."""
+    from datetime import datetime
+    config_path = path or (_replica_config_dir() / "replica.toml")
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+
+    cfg = load(config_path)
+    now = datetime.utcnow().isoformat()
+    for repo in cfg.watched_repos:
+        if repo.slug == slug:
+            repo.secret = secret
+            _write(cfg, config_path)
+            return config_path
+    cfg.watched_repos.append(WatchedRepo(slug=slug, secret=secret, created_at=now))
+    _write(cfg, config_path)
+    return config_path
+
+
+def remove_watched_repo(slug: str, path: Path | None = None) -> bool:
+    config_path = path or (_replica_config_dir() / "replica.toml")
+    if not config_path.exists():
+        return False
+    cfg = load(config_path)
+    before = len(cfg.watched_repos)
+    cfg.watched_repos = [r for r in cfg.watched_repos if r.slug != slug]
+    if len(cfg.watched_repos) == before:
+        return False
+    _write(cfg, config_path)
+    return True
 
 
 def _write(cfg: ReplicaConfig, path: Path) -> None:
@@ -210,6 +270,21 @@ def _write(cfg: ReplicaConfig, path: Path) -> None:
         ]
         if dev.subscriber_id:
             lines.append(f'subscriber_id = "{dev.subscriber_id}"\n')
+        if dev.github_login:
+            lines.append(f'github_login = "{dev.github_login}"\n')
+        lines.append("\n")
+    for repo in cfg.watched_repos:
+        lines += [
+            "[[watched_repos]]\n",
+            f'slug = "{repo.slug}"\n',
+            f'secret = "{repo.secret}"\n',
+        ]
+        if repo.created_at:
+            lines.append(f'created_at = "{repo.created_at}"\n')
+        if repo.last_event_at:
+            lines.append(f'last_event_at = "{repo.last_event_at}"\n')
+        if repo.event_count:
+            lines.append(f"event_count = {repo.event_count}\n")
         lines.append("\n")
     for n in cfg.notifications:
         lines += ["[[notifications]]\n", f'type = "{n.type}"\n']

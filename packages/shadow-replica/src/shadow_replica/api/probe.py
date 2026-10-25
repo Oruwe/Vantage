@@ -21,7 +21,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def make_router(hub: "WSHub", store: "ReceivedStore", trusted_devs: list) -> APIRouter:
+def make_router(hub: "WSHub", store: "ReceivedStore", trusted_devs: list, bus=None) -> APIRouter:
+    # bus is accepted for symmetry; hub.probe() already publishes probe envelopes.
     r = APIRouter()
 
     @r.post("/v1/probe/{developer_id}")
@@ -45,19 +46,18 @@ def make_router(hub: "WSHub", store: "ReceivedStore", trusted_devs: list) -> API
             repo_hint=repo_hint,
         )
 
-        if hub.is_online(developer_id):
-            t0 = time.monotonic()
-            response = await hub.probe(developer_id, probe_req)
-            if response is not None:
-                probe_latency.observe(time.monotonic() - t0)
-                probe_requests.labels(developer_id=developer_id, decision=response.policy_decision.value).inc()
-                if response.snapshot and response.snapshot.activity_signals:
-                    hub.cache_activity(
-                        developer_id,
-                        response.snapshot.activity_signals,
-                        response.snapshot.captured_at,
-                    )
-                return JSONResponse(response.model_dump(mode="json"))
+        t0 = time.monotonic()
+        response = await hub.probe(developer_id, probe_req)
+        if response is not None:
+            probe_latency.observe(time.monotonic() - t0)
+            probe_requests.labels(developer_id=developer_id, decision=response.policy_decision.value).inc()
+            if response.snapshot and response.snapshot.activity_signals:
+                hub.cache_activity(
+                    developer_id,
+                    response.snapshot.activity_signals,
+                    response.snapshot.captured_at,
+                )
+            return JSONResponse(response.model_dump(mode="json"))
 
         fallback = generate_fallback(store, developer_id, hub=hub)
         fallback.request_id = probe_req.request_id

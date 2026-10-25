@@ -4,46 +4,282 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Vantage — {% block title %}{% endblock %}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
+  :root {
+    --bg: #0a0a0d;
+    --sf: #121216;
+    --sf2: #16161c;
+    --sf3: #1c1c23;
+    --bd: #27272e;
+    --bd2: #35353e;
+    --tx: #ededf0;
+    --tx2: #a0a0a8;
+    --tx3: #6c6c76;
+    --p:  #a78bfa;
+    --p2: #c4b5fd;
+    --pbg: rgba(167, 139, 250, 0.1);
+    --pbd: rgba(167, 139, 250, 0.3);
+    --em: #22d3b0;
+    --embg: rgba(34, 211, 176, 0.1);
+    --embd: rgba(34, 211, 176, 0.3);
+    --am: #fbbf24;
+    --ambg: rgba(251, 191, 36, 0.1);
+    --ambd: rgba(251, 191, 36, 0.3);
+    --re: #f87171;
+    --rebg: rgba(248, 113, 113, 0.1);
+    --rebd: rgba(248, 113, 113, 0.3);
+    --te: #22d3ee;
+    --tebg: rgba(34, 211, 238, 0.1);
+    --tebd: rgba(34, 211, 238, 0.3);
+    --mono: 'Geist Mono', 'Cascadia Code', 'Fira Code', monospace;
+  }
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: system-ui, -apple-system, sans-serif; background: #0f0f11; color: #e2e2e5; min-height: 100vh; }
-  a { color: #a78bfa; text-decoration: none; }
-  a:hover { text-decoration: underline; }
-  nav { background: #18181b; border-bottom: 1px solid #27272a; padding: 0.75rem 1.5rem; display: flex; gap: 1.5rem; align-items: center; }
-  nav .brand { font-weight: 700; color: #a78bfa; font-size: 1.1rem; }
-  main { max-width: 900px; margin: 2rem auto; padding: 0 1.5rem; }
-  h1 { font-size: 1.4rem; margin-bottom: 1.25rem; color: #f4f4f5; }
-  h2 { font-size: 1.1rem; margin-bottom: 0.75rem; color: #d4d4d8; }
-  .card { background: #18181b; border: 1px solid #27272a; border-radius: 8px; padding: 1.25rem; margin-bottom: 1rem; }
-  .badge { display: inline-block; font-size: 0.7rem; padding: 0.15rem 0.5rem; border-radius: 99px; font-weight: 600; letter-spacing: 0.04em; }
-  .badge-pending { background: #854d0e; color: #fef08a; }
-  .badge-approved { background: #14532d; color: #86efac; }
-  .badge-rejected { background: #450a0a; color: #fca5a5; }
-  .meta { font-size: 0.8rem; color: #71717a; margin-top: 0.25rem; }
-  textarea { width: 100%; min-height: 320px; background: #09090b; color: #e2e2e5; border: 1px solid #3f3f46; border-radius: 6px; padding: 0.75rem; font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 0.85rem; resize: vertical; }
-  button { cursor: pointer; border: none; border-radius: 6px; padding: 0.5rem 1.2rem; font-size: 0.9rem; font-weight: 600; transition: opacity 0.15s; }
-  button:hover { opacity: 0.85; }
-  .btn-approve { background: #16a34a; color: #fff; }
-  .btn-reject  { background: #dc2626; color: #fff; }
-  .btn-secondary { background: #3f3f46; color: #e4e4e7; }
-  .actions { display: flex; gap: 0.75rem; margin-top: 1rem; }
-  .empty { color: #52525b; text-align: center; padding: 3rem 0; }
-  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
-  th { text-align: left; color: #71717a; font-weight: 600; padding: 0.5rem 0.75rem; border-bottom: 1px solid #27272a; }
-  td { padding: 0.5rem 0.75rem; border-bottom: 1px solid #1c1c1f; vertical-align: top; }
-  td.redaction { font-family: monospace; font-size: 0.78rem; color: #f59e0b; }
-  pre { background: #09090b; border: 1px solid #27272a; border-radius: 6px; padding: 1rem; overflow-x: auto; font-size: 0.82rem; white-space: pre-wrap; }
+  body {
+    font-family: 'Geist', system-ui, -apple-system, sans-serif;
+    background: var(--bg); color: var(--tx);
+    min-height: 100vh;
+    font-feature-settings: "cv11", "ss01";
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--p2); text-decoration: none; transition: color .15s; }
+  a:hover { color: var(--p); }
+  code { font-family: var(--mono); font-size: 0.9em; background: var(--sf2); border: 1px solid var(--bd); padding: 1px 6px; border-radius: 4px; color: var(--te); }
+  nav {
+    background: var(--sf);
+    border-bottom: 1px solid var(--bd);
+    padding: 0.75rem 1.5rem;
+    display: flex; gap: 1.5rem; align-items: center;
+    position: sticky; top: 0; z-index: 10;
+    backdrop-filter: blur(12px);
+  }
+  nav .brand {
+    font-weight: 700; color: var(--p); font-size: 1.05rem;
+    letter-spacing: -0.01em;
+    display: flex; align-items: center; gap: 0.5rem;
+  }
+  nav .brand::before {
+    content: ''; width: 8px; height: 8px; border-radius: 2px;
+    background: linear-gradient(135deg, var(--p), var(--te));
+    box-shadow: 0 0 10px var(--pbd);
+  }
+  nav a {
+    font-size: 0.88rem; color: var(--tx2); font-weight: 500;
+    padding: 0.3rem 0.6rem; border-radius: 6px; transition: all .15s;
+  }
+  nav a:hover { color: var(--tx); background: var(--sf2); text-decoration: none; }
+  nav a.active { color: var(--p); background: var(--pbg); }
+  nav .spacer { flex: 1; }
+  /* ── Pairing pill ─────────────────────────────────────── */
+  .pair-pill {
+    display: inline-flex; align-items: center; gap: 0.55rem;
+    background: var(--sf2); border: 1px solid var(--bd);
+    padding: 0.3rem 0.65rem 0.3rem 0.55rem;
+    border-radius: 999px; font-size: 0.75rem; color: var(--tx2);
+    font-family: var(--mono);
+    transition: all .2s;
+  }
+  .pair-pill[data-state="connected"] { border-color: var(--embd); color: var(--em); background: var(--embg); }
+  .pair-pill[data-state="partial"]   { border-color: var(--ambd); color: var(--am); background: var(--ambg); }
+  .pair-pill[data-state="offline"]   { border-color: var(--rebd); color: var(--re); background: var(--rebg); }
+  .pair-pill[data-state="none"]      { opacity: 0.5; }
+  .pair-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: currentColor; box-shadow: 0 0 0 2px rgba(255,255,255,0);
+  }
+  .pair-pill[data-state="connected"] .pair-dot {
+    animation: pulse 1.6s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { box-shadow: 0 0 0 0 currentColor; opacity: 1; }
+    50%      { box-shadow: 0 0 0 4px rgba(34, 211, 176, 0); opacity: 0.7; }
+  }
+  .pair-pill:hover .pair-tt { opacity: 1; pointer-events: auto; }
+  .pair-tt {
+    position: absolute; top: 3.2rem; right: 1.5rem;
+    background: var(--sf2); border: 1px solid var(--bd);
+    border-radius: 8px; padding: 0.75rem;
+    font-family: var(--mono); font-size: 0.72rem;
+    min-width: 240px; opacity: 0; pointer-events: none;
+    transition: opacity .15s;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+    z-index: 100;
+  }
+  .pair-tt-row { display: flex; justify-content: space-between; gap: 1rem; padding: 2px 0; }
+  .pair-tt-row > span:last-child { color: var(--tx); }
+  main { max-width: 920px; margin: 2rem auto; padding: 0 1.5rem; }
+  h1 { font-size: 1.5rem; margin-bottom: 1.5rem; color: var(--tx); font-weight: 600; letter-spacing: -0.02em; }
+  h2 { font-size: 1.05rem; margin-bottom: 0.75rem; color: var(--tx2); font-weight: 500; }
+  .card {
+    background: var(--sf);
+    border: 1px solid var(--bd);
+    border-radius: 10px;
+    padding: 1.25rem;
+    margin-bottom: 0.75rem;
+    transition: border-color .15s, transform .15s;
+  }
+  .card.focused {
+    border-color: var(--p);
+    box-shadow: 0 0 0 1px var(--pbd), 0 4px 24px -8px var(--pbd);
+    transform: translateY(-1px);
+  }
+  .badge {
+    display: inline-flex; align-items: center; gap: 0.35rem;
+    font-size: 0.7rem; padding: 0.2rem 0.55rem; border-radius: 999px;
+    font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase;
+    font-family: var(--mono);
+  }
+  .badge-pending { background: var(--ambg); color: var(--am); border: 1px solid var(--ambd); }
+  .badge-approved { background: var(--embg); color: var(--em); border: 1px solid var(--embd); }
+  .badge-rejected { background: var(--rebg); color: var(--re); border: 1px solid var(--rebd); }
+  .badge-pending::before {
+    content: ''; width: 5px; height: 5px; border-radius: 50%;
+    background: currentColor; animation: pulse 1.6s ease-in-out infinite;
+  }
+  .meta { font-size: 0.8rem; color: var(--tx3); margin-top: 0.25rem; }
+  textarea {
+    width: 100%; min-height: 340px;
+    background: var(--sf2); color: var(--tx);
+    border: 1px solid var(--bd); border-radius: 8px;
+    padding: 0.9rem;
+    font-family: var(--mono); font-size: 0.82rem; line-height: 1.55;
+    resize: vertical; outline: none;
+    transition: border-color .15s;
+  }
+  textarea:focus { border-color: var(--p); }
+  button {
+    cursor: pointer; border: 1px solid transparent;
+    border-radius: 7px; padding: 0.55rem 1.1rem;
+    font-size: 0.86rem; font-weight: 600;
+    font-family: inherit;
+    transition: all .15s;
+    display: inline-flex; align-items: center; gap: 0.4rem;
+  }
+  button:hover { transform: translateY(-1px); }
+  .btn-approve  { background: var(--em); color: #06231c; }
+  .btn-approve:hover { background: #4ade80; }
+  .btn-reject   { background: var(--re); color: #2a0808; }
+  .btn-reject:hover { background: #fca5a5; }
+  .btn-secondary {
+    background: var(--sf2); color: var(--tx2); border-color: var(--bd);
+  }
+  .btn-secondary:hover { color: var(--tx); border-color: var(--bd2); background: var(--sf3); }
+  .btn-ghost {
+    background: transparent; color: var(--tx3); border: 1px solid var(--bd);
+  }
+  .btn-ghost:hover { color: var(--tx2); background: var(--sf2); }
+  .kbd {
+    display: inline-block; font-family: var(--mono); font-size: 0.7rem;
+    padding: 1px 5px; border-radius: 3px;
+    background: var(--sf3); border: 1px solid var(--bd2);
+    color: var(--tx2); vertical-align: 1px;
+  }
+  .actions { display: flex; gap: 0.6rem; margin-top: 1rem; flex-wrap: wrap; }
+  .empty {
+    color: var(--tx3); text-align: center; padding: 3rem 1rem;
+    background: var(--sf); border: 1px dashed var(--bd); border-radius: 10px;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 0.84rem; }
+  th {
+    text-align: left; color: var(--tx3); font-weight: 500;
+    padding: 0.65rem 0.75rem; border-bottom: 1px solid var(--bd);
+    font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.04em;
+    font-family: var(--mono);
+  }
+  td { padding: 0.65rem 0.75rem; border-bottom: 1px solid var(--sf2); vertical-align: middle; }
+  tr:hover td { background: var(--sf2); }
+  td.redaction { font-family: var(--mono); font-size: 0.76rem; color: var(--am); }
+  pre {
+    background: var(--sf2); border: 1px solid var(--bd); border-radius: 8px;
+    padding: 1rem; overflow-x: auto; font-size: 0.82rem; font-family: var(--mono);
+    white-space: pre-wrap; line-height: 1.55; color: var(--tx);
+  }
+  /* ── Keyboard hints bar ───────────────────────────────── */
+  .kb-hints {
+    position: fixed; bottom: 1rem; left: 50%; transform: translateX(-50%);
+    display: inline-flex; gap: 1rem; align-items: center;
+    background: var(--sf); border: 1px solid var(--bd);
+    padding: 0.5rem 1rem; border-radius: 999px;
+    font-size: 0.75rem; color: var(--tx3);
+    backdrop-filter: blur(8px);
+    box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+    opacity: 0.9;
+  }
+  .kb-hints span { display: inline-flex; gap: 0.3rem; align-items: center; }
 </style>
 </head>
 <body>
 <nav>
-  <span class="brand">⬡ Vantage</span>
-  <a href="/">Drafts</a>
-  <a href="/subscribers">Subscribers</a>
-  <a href="/audit">Audit</a>
+  <span class="brand">Vantage</span>
+  <a href="/" {% if active_page == 'drafts' %}class="active"{% endif %}>Drafts <span class="kbd">g d</span></a>
+  <a href="/subscribers" {% if active_page == 'subscribers' %}class="active"{% endif %}>Subscribers</a>
+  <a href="/audit" {% if active_page == 'audit' %}class="active"{% endif %}>Audit <span class="kbd">g a</span></a>
+  <span class="spacer"></span>
+  <span style="position:relative">
+    <span id="pair-pill" class="pair-pill" data-state="none">
+      <span class="pair-dot"></span>
+      <span id="pair-text">—</span>
+    </span>
+    <span id="pair-tt" class="pair-tt"></span>
+  </span>
 </nav>
 <main>
   {% block content %}{% endblock %}
 </main>
+<script>
+/* ── Live pairing badge ─────────────────────────────────── */
+async function refreshPairing() {
+  try {
+    const r = await fetch('/api/pairing-status');
+    if (!r.ok) return;
+    const d = await r.json();
+    const pill = document.getElementById('pair-pill');
+    const txt  = document.getElementById('pair-text');
+    const tt   = document.getElementById('pair-tt');
+    if (!pill) return;
+    const subs = d.subscribers || [];
+    if (!subs.length) {
+      pill.setAttribute('data-state', 'none');
+      txt.textContent = 'no live subs';
+      tt.innerHTML = '<div style="color:var(--tx3)">No subscribers have live_probe enabled.</div>';
+      return;
+    }
+    const state = d.connected === d.total ? 'connected'
+                : d.connected === 0 ? 'offline'
+                : 'partial';
+    pill.setAttribute('data-state', state);
+    txt.textContent = `${d.connected}/${d.total} paired`;
+    tt.innerHTML = subs.map(s =>
+      `<div class="pair-tt-row"><span>${escapeHTML(s.name)}</span>` +
+      `<span style="color:var(--${s.connected ? 'em' : 'tx3'})">${s.connected ? 'connected' : 'disconnected'}</span></div>` +
+      (s.last_error ? `<div style="color:var(--re);font-size:.65rem;margin-left:.5rem">${escapeHTML(s.last_error)}</div>` : '')
+    ).join('');
+  } catch (e) { /* keep last state */ }
+}
+function escapeHTML(s) { return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+refreshPairing();
+setInterval(refreshPairing, 10000);
+
+/* ── Global go-to chords (g d, g a) ─────────────────────── */
+let _gBuf = null, _gTimer = null;
+document.addEventListener('keydown', (e) => {
+  if (e.target.matches('input, textarea, select')) return;
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.key === 'g' && !_gBuf) {
+    _gBuf = 'g';
+    clearTimeout(_gTimer);
+    _gTimer = setTimeout(() => { _gBuf = null; }, 800);
+    return;
+  }
+  if (_gBuf === 'g') {
+    if (e.key === 'd') { location.href = '/'; _gBuf = null; return; }
+    if (e.key === 'a') { location.href = '/audit'; _gBuf = null; return; }
+    if (e.key === 's') { location.href = '/subscribers'; _gBuf = null; return; }
+    _gBuf = null;
+  }
+});
+</script>
+{% block bottom %}{% endblock %}
 </body>
 </html>

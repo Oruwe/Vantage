@@ -1,0 +1,181 @@
+{% extends "base.html" %}
+{% block title %}Redaction X-Ray{% endblock %}
+{% block content %}
+<style>
+  .xr-head { display: flex; align-items: baseline; gap: 0.75rem; margin-bottom: 1rem; flex-wrap: wrap; }
+  .xr-head h1 { margin: 0; }
+  .xr-stats { display: flex; gap: 1rem; margin: 0.5rem 0 1.5rem; font-size: 0.8rem; color: var(--tx2); flex-wrap: wrap; }
+  .xr-stat { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.3rem 0.65rem; background: var(--sf); border: 1px solid var(--bd); border-radius: 6px; font-family: var(--mono); }
+  .xr-stat b { color: var(--tx); font-weight: 600; }
+  .xr-kinds { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-bottom: 1.25rem; }
+  .xr-kind-chip {
+    display: inline-flex; align-items: center; gap: 0.4rem;
+    background: var(--ambg); color: var(--am); border: 1px solid var(--ambd);
+    padding: 0.2rem 0.65rem; border-radius: 999px; font-size: 0.74rem;
+    font-family: var(--mono);
+  }
+  .xr-kind-chip b { color: var(--tx); font-weight: 700; }
+  .xr-kind-chip[data-kind="aws_access_key"],
+  .xr-kind-chip[data-kind="aws_secret_key"] { color: var(--re); background: var(--rebg); border-color: var(--rebd); }
+  .xr-kind-chip[data-kind="github_token"],
+  .xr-kind-chip[data-kind="gitlab_token"]   { color: var(--p); background: var(--pbg); border-color: var(--pbd); }
+  .xr-kind-chip[data-kind="private_key"]    { color: #f472b6; background: rgba(244,114,182,.1); border-color: rgba(244,114,182,.3); }
+  .xr-kind-chip[data-kind="jwt"],
+  .xr-kind-chip[data-kind="bearer_token"]   { color: var(--te); background: var(--tebg); border-color: var(--tebd); }
+
+  .xr-explain {
+    background: var(--sf); border: 1px solid var(--bd); border-radius: 10px;
+    padding: 0.9rem 1.1rem; margin-bottom: 1.5rem; color: var(--tx2); line-height: 1.6;
+    font-size: 0.86rem;
+  }
+  .xr-explain b { color: var(--p2); font-weight: 600; }
+
+  /* ── Side-by-side panes ──────────────────────────────── */
+  .xr-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;
+  }
+  @media (max-width: 900px) { .xr-grid { grid-template-columns: 1fr; } }
+  .xr-panel {
+    background: var(--sf); border: 1px solid var(--bd); border-radius: 10px;
+    overflow: hidden; display: flex; flex-direction: column;
+  }
+  .xr-panel header {
+    background: var(--sf2); padding: 0.6rem 0.95rem;
+    font-size: 0.76rem; color: var(--tx2); letter-spacing: 0.04em;
+    text-transform: uppercase; border-bottom: 1px solid var(--bd);
+    display: flex; align-items: center; gap: 0.6rem; font-family: var(--mono);
+  }
+  .xr-panel.raw header { color: var(--re); }
+  .xr-panel.scrubbed header { color: var(--em); }
+  .xr-pill {
+    background: currentColor; color: var(--bg);
+    font-size: 0.64rem; padding: 0.1rem 0.5rem; border-radius: 999px;
+    font-weight: 700; letter-spacing: 0.03em;
+  }
+  .xr-content {
+    padding: 1rem; font-family: var(--mono);
+    font-size: 0.8rem; line-height: 1.6; white-space: pre-wrap; word-break: break-word;
+    color: var(--tx2); max-height: 70vh; overflow-y: auto;
+  }
+  .xr-panel.raw .xr-content { background: rgba(248, 113, 113, 0.03); }
+  .xr-panel.scrubbed .xr-content { background: rgba(34, 211, 176, 0.03); }
+
+  /* ── Raw pane: redacted placeholders ─────────────────── */
+  .xr-raw {
+    display: inline-block;
+    color: var(--re); background: var(--rebg);
+    padding: 0 4px; border-radius: 3px; margin: 0 1px;
+    letter-spacing: 0.05em;
+    position: relative;
+    animation: shimmer 2.5s linear infinite;
+    background-size: 200% 100%;
+    background-image: linear-gradient(90deg, var(--rebg) 0%, rgba(248,113,113,0.2) 50%, var(--rebg) 100%);
+    cursor: help;
+  }
+  .xr-raw[data-kind="aws_access_key"],
+  .xr-raw[data-kind="aws_secret_key"] { color: var(--re); }
+  .xr-raw[data-kind="github_token"],
+  .xr-raw[data-kind="gitlab_token"]   { color: var(--p); background: var(--pbg); background-image: linear-gradient(90deg, var(--pbg) 0%, rgba(167,139,250,0.2) 50%, var(--pbg) 100%); }
+  .xr-raw[data-kind="private_key"]    { color: #f472b6; background: rgba(244,114,182,.1); display: block; margin: 0.3rem 0; padding: 0.3rem; }
+  .xr-raw[data-kind="jwt"],
+  .xr-raw[data-kind="bearer_token"]   { color: var(--te); background: var(--tebg); }
+
+  @keyframes shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+
+  /* ── Scrubbed pane: pulsing lock chip ────────────────── */
+  .xr-tok {
+    display: inline-flex; align-items: center; gap: 0.3rem;
+    background: var(--ambg); color: var(--am);
+    border: 1px solid var(--ambd);
+    padding: 1px 6px 1px 4px; border-radius: 4px; margin: 0 1px;
+    font-size: 0.72rem; cursor: help;
+    transition: all .15s;
+    vertical-align: baseline;
+  }
+  .xr-tok:hover { transform: translateY(-1px); filter: brightness(1.2); }
+  .xr-tok[data-kind="aws_access_key"],
+  .xr-tok[data-kind="aws_secret_key"] { color: var(--re); background: var(--rebg); border-color: var(--rebd); }
+  .xr-tok[data-kind="github_token"],
+  .xr-tok[data-kind="gitlab_token"]   { color: var(--p);  background: var(--pbg);  border-color: var(--pbd);  }
+  .xr-tok[data-kind="private_key"]    { color: #f472b6; background: rgba(244,114,182,.1); border-color: rgba(244,114,182,.3); }
+  .xr-tok[data-kind="jwt"],
+  .xr-tok[data-kind="bearer_token"]   { color: var(--te); background: var(--tebg); border-color: var(--tebd); }
+
+  .xr-lock { color: currentColor; animation: lock-pulse 1.6s ease-in-out infinite; flex-shrink: 0; }
+  @keyframes lock-pulse {
+    0%, 100% { opacity: 0.85; transform: scale(1); }
+    50%      { opacity: 1; transform: scale(1.1); }
+  }
+  .xr-tok-kind { font-weight: 600; font-family: var(--mono); letter-spacing: 0.02em; }
+  .xr-tok-fp   { opacity: 0.6; font-family: var(--mono); font-size: 0.65rem; }
+
+  .xr-footer {
+    display: flex; justify-content: space-between; align-items: center;
+    gap: 1rem; margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--bd);
+    flex-wrap: wrap;
+  }
+  .xr-note { color: var(--tx3); font-size: 0.78rem; line-height: 1.5; max-width: 48rem; }
+</style>
+
+<div class="xr-head">
+  <h1>Redaction X-Ray</h1>
+  <span class="badge badge-{{ status }}">{{ status }}</span>
+  <span style="color:var(--tx3); font-size:0.85rem">{{ artifact_type | replace('_', ' ') | title }}</span>
+</div>
+
+<div class="xr-explain">
+  <b>Side-by-side proof.</b> Left pane shows the shape of the secrets the local scrubber caught —
+  character counts and kind-specific signatures — before anything crossed a trust boundary.
+  Right pane shows the fingerprinted placeholders that actually leave your machine.
+  Hover any chip for details. The original values are never persisted anywhere; only a 6-char
+  SHA-256 fingerprint lives in the audit log for provenance chaining.
+</div>
+
+<div class="xr-stats">
+  <span class="xr-stat">🔒 <b>{{ tokens }}</b> redactions</span>
+  <span class="xr-stat">📦 <b>{{ payload_bytes }}</b> bytes</span>
+  <span class="xr-stat">📋 <b>{{ turn_count }}</b> list items</span>
+</div>
+
+<div class="xr-kinds">
+  {% for kind, count in kind_counts %}
+  <span class="xr-kind-chip" data-kind="{{ kind }}">{{ kind | replace('_', ' ') }}<b>×{{ count }}</b></span>
+  {% else %}
+  <span class="xr-kind-chip" style="color:var(--em);border-color:var(--embd);background:var(--embg)">
+    ✓ no secrets detected — payload is clean
+  </span>
+  {% endfor %}
+</div>
+
+<div class="xr-grid">
+  <div class="xr-panel raw">
+    <header>
+      Raw shape (what the scrubber caught)
+      {% if tokens %}<span class="xr-pill">{{ tokens }} stripped</span>{% endif %}
+    </header>
+    <div class="xr-content">{{ raw_html | safe }}</div>
+  </div>
+  <div class="xr-panel scrubbed">
+    <header>
+      Scrubbed (what subscribers receive)
+      {% if tokens %}<span class="xr-pill">audit chained</span>{% endif %}
+    </header>
+    <div class="xr-content">{{ scrubbed_html | safe }}</div>
+  </div>
+</div>
+
+<div class="xr-footer">
+  <p class="xr-note">
+    If this draft reveals a redaction gap, update <code>redaction/scrubber.py</code>
+    and reject the draft. The pre-redaction content was never persisted — only a
+    SHA-256 fingerprint for provenance.
+  </p>
+  <div class="actions" style="margin-top:0">
+    <a href="/draft/{{ draft_id }}"><button class="btn-secondary">Back to draft</button></a>
+    <a href="/audit"><button class="btn-ghost">Audit log</button></a>
+  </div>
+</div>
+{% endblock %}

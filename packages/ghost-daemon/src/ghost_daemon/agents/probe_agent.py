@@ -1,20 +1,27 @@
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from vantage.schemas import (
-    Channel, PolicyDecision, ProbeRequest, ProbeResponse, RedactionLevel,
-    SessionSnapshot, Turn,
+    Channel, CounterOffer, PolicyDecision, ProbeRequest, ProbeResponse,
+    RedactionLevel, SessionSnapshot, Turn,
 )
+
+_SYSTEM_SUBSCRIBER = "replica:system"
 from ghost_daemon.agents.activity_extractor import extract_activity_signals
 from ghost_daemon.approval.policy import load_policy
 from ghost_daemon.config import Config
 from ghost_daemon.models.registry import LLMProvider
 from ghost_daemon.redaction.scrubber import scrub
 from ghost_daemon.watchers.session_tail import SessionTailer
+
+if TYPE_CHECKING:
+    from ghost_daemon.storage.sqlite_store import SQLiteStore
 
 logger = logging.getLogger(__name__)
 
@@ -23,14 +30,44 @@ class ProbeAgent:
     """Handles incoming live-probe requests from the dev's ws_client.
 
     Policy is evaluated on the dev's machine — the subscriber never bypasses it.
+    When policy denies the live tail, the agent builds a `CounterOffer`
+    pointing at the most-recent *already-approved* commit so the manager isn't
+    stonewalled — a visible, auditable downgrade instead of a flat refusal.
     """
 
-    def __init__(self, cfg: Config, llm: LLMProvider, tailer: SessionTailer) -> None:
+    def __init__(
+        self,
+        cfg: Config,
+        llm: LLMProvider,
+        tailer: SessionTailer,
+        store: "SQLiteStore | None" = None,
+    ) -> None:
         self._cfg = cfg
         self._llm = llm
         self._tailer = tailer
+        self._store = store
 
     async def run(self, request: ProbeRequest) -> ProbeResponse:
+        # Reactive follow-up probes from the replica (triggered by a CI failure
+        # or a changes-requested review on *this* dev's work) bypass the per-
+        # subscriber policy and return activity signals only — never raw turns.
+        # The question is "is Alice already looking at this?", not "show me her
+        # code" — so the strict path is both safer AND more useful.
+        if request.subscriber_id == _SYSTEM_SUBSCRIBER:
+            snapshot = await self._collect_snapshot()
+            snapshot.last_turns = []  # strict: never leak content for reactive probes
+            logger.info(
+                "Reactive-followup probe answered (activity-only) for repo_hint=%r",
+                request.repo_hint,
+            )
+            return ProbeResponse(
+                request_id=request.request_id,
+                developer_id=self._cfg.developer_id,
+                policy_decision=PolicyDecision.ALLOWED,
+                snapshot=snapshot,
+                redaction_level_applied=RedactionLevel.STRICT,
+            )
+
         policy = load_policy(request.subscriber_id, self._cfg.vantage_dir)
 
         decision = self._check_policy(policy, request)
@@ -43,12 +80,17 @@ class ProbeAgent:
                 policy.probe_hours_end,
                 request.repo_hint,
             )
+            counter = self._build_counter_offer(decision, policy)
             return ProbeResponse(
                 request_id=request.request_id,
                 developer_id=self._cfg.developer_id,
                 policy_decision=decision,
-                fallback_summary="Response not available due to policy.",
+                fallback_summary=(
+                    counter.summary if counter and counter.summary
+                    else "Response not available due to policy."
+                ),
                 redaction_level_applied=policy.redaction_level,
+                counter_offer=counter,
             )
 
         snapshot = await self._collect_snapshot()
@@ -64,6 +106,80 @@ class ProbeAgent:
             snapshot=snapshot,
             redaction_level_applied=policy.redaction_level,
         )
+
+    # ── Counter-offer construction ────────────────────────────────────────────
+
+    def _build_counter_offer(self, decision: PolicyDecision, policy) -> CounterOffer | None:
+        """Offer a bounded downgrade: pointer to the most recent approved commit.
+
+        No new data crosses the wire — the shadow-replica already has this
+        artifact. The counter-offer is a *handle* the manager UI can resolve
+        locally while still respecting that the live tail is withheld.
+        """
+        reason = self._deny_reason(decision, policy)
+        store = self._store
+        if store is None:
+            return CounterOffer(reason=reason)
+
+        try:
+            rows = store.list_recent(limit=50)
+        except Exception as exc:
+            logger.debug("Counter-offer lookup failed: %s", exc)
+            return CounterOffer(reason=reason)
+
+        for row in rows:
+            if row.status != "approved":
+                continue
+            if row.artifact_type not in ("commit_report", "standup"):
+                continue
+            summary = self._row_summary(row)
+            if not summary:
+                continue
+            created = None
+            if row.created_at:
+                try:
+                    created = datetime.fromisoformat(row.created_at)
+                except Exception:
+                    created = None
+            return CounterOffer(
+                approval_id=getattr(row, "approval_id", "") or getattr(row, "draft_id", ""),
+                artifact_type=row.artifact_type,
+                summary=f"Live tail withheld. Last approved {row.artifact_type}: {summary}",
+                created_at=created,
+                reason=reason,
+            )
+        return CounterOffer(reason=reason)
+
+    @staticmethod
+    def _deny_reason(decision: PolicyDecision, policy) -> str:
+        if decision == PolicyDecision.OFFLINE:
+            return "offline"
+        parts = []
+        if policy.probe_hours_start is not None and policy.probe_hours_end is not None:
+            parts.append(f"hours {policy.probe_hours_start:02d}-{policy.probe_hours_end:02d} UTC")
+        if policy.probe_repos_deny:
+            parts.append("repo denylist")
+        elif policy.probe_repos_allow:
+            parts.append("repo allowlist")
+        if not parts:
+            return "channel not enabled"
+        return "policy: " + ", ".join(parts)
+
+    @staticmethod
+    def _row_summary(row) -> str:
+        src = row.edited_payload_json or getattr(row, "payload_json", None)
+        if not src:
+            return ""
+        try:
+            payload = json.loads(src)
+        except Exception:
+            return ""
+        if row.artifact_type == "commit_report":
+            return (payload.get("author_msg") or payload.get("generated_summary") or "")[:140]
+        if row.artifact_type == "standup":
+            today = payload.get("today", [])
+            return today[0][:140] if today else ""
+        return ""
 
     # ── Policy gating ─────────────────────────────────────────────────────────
 

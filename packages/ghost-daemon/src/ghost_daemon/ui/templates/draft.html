@@ -1,36 +1,62 @@
 {% extends "base.html" %}
 {% block title %}Review Draft{% endblock %}
 {% block content %}
-<h1>
-  <span class="badge badge-{{ status }}">{{ status | title }}</span>
-  {{ artifact_type | replace('_', ' ') | title }}
-  <span style="color:#52525b; font-size:0.85rem; font-weight:400;">{{ period_start[:10] }} → {{ period_end[:10] }}</span>
+<h1 style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap">
+  <span class="badge badge-{{ status }}">{{ status }}</span>
+  <span>{{ artifact_type | replace('_', ' ') | title }}</span>
+  <span style="color:var(--tx3); font-size:0.85rem; font-weight:400;">
+    {{ period_start[:10] }} → {{ period_end[:10] }}
+  </span>
 </h1>
 
 {% if status == "pending" %}
 <form method="post" action="/draft/{{ draft_id }}/approve" id="approve-form">
   <div class="card">
-    <h2>Edit before approving</h2>
-    <p class="meta" style="margin-bottom:0.75rem;">
-      Edit the JSON below to adjust what gets sent to subscribers. Only the approved version leaves your machine.
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem">
+      <h2 style="margin:0">Edit before approving</h2>
+      <span style="color:var(--tx3);font-size:0.75rem;font-family:var(--mono)">
+        <span class="kbd">Ctrl+⏎</span> approve · <span class="kbd">Esc</span> back
+      </span>
+    </div>
+    <p style="color:var(--tx3);font-size:0.82rem;margin-bottom:0.75rem;line-height:1.5">
+      Edit the JSON below to adjust what gets sent to subscribers. Only the approved
+      version leaves your machine — the raw session is never persisted.
     </p>
-    <textarea name="edited_json" id="payload-editor">{{ payload_json }}</textarea>
+    <textarea name="edited_json" id="payload-editor" spellcheck="false">{{ payload_json }}</textarea>
   </div>
   <div class="actions">
-    <button type="submit" class="btn-approve" form="approve-form">Approve &amp; Send</button>
-    <form method="post" action="/draft/{{ draft_id }}/reject" style="display:inline;">
-      <button type="submit" class="btn-reject">Reject</button>
-    </form>
-    <a href="/"><button type="button" class="btn-secondary">Back</button></a>
+    <button type="submit" class="btn-approve" form="approve-form">
+      Approve &amp; Send <span class="kbd">Ctrl+⏎</span>
+    </button>
+    <button type="button" class="btn-reject" onclick="if(confirm('Reject this draft?')) document.getElementById('reject-form').submit()">
+      Reject
+    </button>
+    <a href="/draft/{{ draft_id }}/xray"><button type="button" class="btn-secondary">🔒 Redaction X-Ray</button></a>
+    <a href="/"><button type="button" class="btn-ghost">Back <span class="kbd">Esc</span></button></a>
   </div>
 </form>
+<form id="reject-form" method="post" action="/draft/{{ draft_id }}/reject" style="display:none"></form>
+
+<script>
+document.addEventListener('keydown', (e) => {
+  const inForm = e.target.matches('textarea, input');
+  if (e.key === 'Escape' && !e.ctrlKey && !e.metaKey) {
+    e.preventDefault();
+    if (inForm) e.target.blur(); else location.href = '/';
+  } else if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+    e.preventDefault();
+    document.getElementById('approve-form').submit();
+  }
+});
+</script>
 {% else %}
 <div class="card">
   <h2>Payload</h2>
   <pre>{{ payload_json }}</pre>
 </div>
 <div class="actions">
-  <a href="/"><button class="btn-secondary">Back</button></a>
+  <a href="/draft/{{ draft_id }}/xray"><button class="btn-secondary">🔒 Redaction X-Ray</button></a>
+  <a href="/"><button class="btn-ghost">Back</button></a>
 </div>
 {% endif %}
 {% endblock %}
