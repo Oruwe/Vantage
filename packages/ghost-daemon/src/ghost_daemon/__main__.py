@@ -137,8 +137,8 @@ def status():
     sock.close()
 
     dev_label = cfg.display_name or cfg.developer_id
-    typer.echo(f"Vantage — {dev_label}")
-    typer.echo("─" * 50)
+    typer.echo(f"Vantage - {dev_label}")
+    typer.echo("-" * 50)
     typer.echo(f"{'Daemon':<16} {'running' if running else 'not running'}"
                + (f"  http://{cfg.ui.bind_address}:{cfg.ui.port}" if running else ""))
     typer.echo(f"{'Provider':<16} {cfg.llm.provider} / {cfg.llm.model}")
@@ -1282,14 +1282,261 @@ def update_check():
         typer.echo(f"vantage-ghost is up to date (v{current})")
 
 
-@app.command("init")
-def init_config():
-    """Create a default config file at ~/.vantage/config.toml."""
-    from ghost_daemon import config as _cfg_mod
+_PROVIDERS: list[tuple[str, str, str, str, str]] = [
+    # (key, label, default_model, default_api_key_env, signup_url)
+    ("anthropic",  "Anthropic (Claude)",                "claude-haiku-4-5-20251001", "ANTHROPIC_API_KEY",   "https://console.anthropic.com/settings/keys"),
+    ("groq",       "Groq (fast, free tier)",            "openai/gpt-oss-120b",       "GROQ_API_KEY",        "https://console.groq.com/keys"),
+    ("grok",       "Grok (xAI)",                        "grok-2-latest",             "XAI_API_KEY",         "https://console.x.ai"),
+    ("openrouter", "OpenRouter (any model, aggregator)","anthropic/claude-3.5-haiku","OPENROUTER_API_KEY",  "https://openrouter.ai/keys"),
+    ("ollama",     "Ollama (local, no API key)",        "llama3.1:8b",               "",                    "https://ollama.com/download"),
+]
 
-    path = _cfg_mod.write_default()
-    typer.echo(f"Config written to {path}")
-    typer.echo("Edit it to set your developer_id, display_name, and LLM provider.")
+
+@app.command("init")
+def init_config(
+    non_interactive: Annotated[bool, typer.Option("--non-interactive", "-y", help="Skip prompts; write defaults only")] = False,
+    force: Annotated[bool, typer.Option("--force", "-f", help="Overwrite existing config without asking")] = False,
+    skip_demo: Annotated[bool, typer.Option("--skip-demo", help="Skip the 'generate your first digest' step")] = False,
+):
+    """Interactive setup wizard - guided ramp from install to first draft.
+
+    Walks through: display name, BYOM provider, API key (stored in OS keychain),
+    live connection test, session-directory confirmation, optional first digest.
+    """
+    from ghost_daemon import config as _cfg_mod
+    from ghost_daemon.models.providers._keychain import store_api_key, resolve_api_key
+
+    cfg_path = _cfg_mod._vantage_dir() / "config.toml"
+
+    # ── Idempotency guard ────────────────────────────────────────────────────
+    if cfg_path.exists() and not force:
+        if non_interactive:
+            typer.echo(f"Config already exists at {cfg_path}. Use --force to overwrite.", err=True)
+            raise typer.Exit(1)
+        overwrite = typer.confirm(f"Config already exists at {cfg_path}. Overwrite?", default=False)
+        if not overwrite:
+            typer.echo("Aborted. Existing config left untouched.")
+            raise typer.Exit(0)
+
+    # ── Non-interactive fast path ────────────────────────────────────────────
+    if non_interactive:
+        path = _cfg_mod.write_default()
+        typer.echo(f"Config written to {path} (defaults).")
+        typer.echo("Edit it to set your developer_id, display_name, and LLM provider.")
+        return
+
+    # ── Welcome banner ───────────────────────────────────────────────────────
+    typer.echo()
+    typer.echo("Vantage — setup wizard")
+    typer.echo("─" * 50)
+    typer.echo("Three quick questions and you'll have your first draft")
+    typer.echo("sitting in a local review queue — nothing leaves this")
+    typer.echo("machine until you approve it.")
+    typer.echo()
+
+    # ── Step 1: display name ─────────────────────────────────────────────────
+    import os
+    default_name = os.environ.get("USER") or os.environ.get("USERNAME") or ""
+    display_name = typer.prompt(
+        "Your display name (shown to subscribers)",
+        default=default_name,
+    ).strip()
+
+    # ── Step 2: provider selection ───────────────────────────────────────────
+    typer.echo()
+    typer.echo("Pick a model provider (bring your own key):")
+    for i, (_, label, model, _, _) in enumerate(_PROVIDERS, 1):
+        marker = "  ← recommended" if i == 1 else ""
+        typer.echo(f"  {i}. {label}{marker}")
+        typer.echo(f"     default model: {model}")
+    typer.echo()
+
+    while True:
+        choice = typer.prompt("Choice", default="1").strip()
+        try:
+            idx = int(choice) - 1
+            if 0 <= idx < len(_PROVIDERS):
+                break
+        except ValueError:
+            pass
+        typer.echo(f"  Enter 1–{len(_PROVIDERS)}.")
+
+    provider_key, provider_label, default_model, default_env, signup_url = _PROVIDERS[idx]
+
+    # ── Step 3: model (allow override) ───────────────────────────────────────
+    typer.echo()
+    model = typer.prompt(f"Model for {provider_label}", default=default_model).strip()
+
+    # ── Step 4: API key (if needed) ──────────────────────────────────────────
+    api_key_env = default_env
+    endpoint = ""
+
+    if provider_key == "ollama":
+        typer.echo()
+        endpoint = typer.prompt("Ollama endpoint", default="http://localhost:11434").strip()
+        api_key_env = ""
+    else:
+        typer.echo()
+        typer.echo(f"We'll store your {provider_label} key in the OS keychain —")
+        typer.echo(f"not written to any config file. Get a key: {signup_url}")
+
+        # Check if a key already exists so we can offer to reuse it.
+        existing = ""
+        try:
+            existing = resolve_api_key(api_key_env)
+        except EnvironmentError:
+            existing = ""
+
+        if existing:
+            typer.echo(f"  Found an existing {api_key_env} ({existing[:8]}…). Reusing it.")
+        else:
+            key_value = typer.prompt(f"Paste your {api_key_env}", hide_input=True).strip()
+            if not key_value:
+                typer.echo("Empty key — aborting.", err=True)
+                raise typer.Exit(1)
+            try:
+                store_api_key(api_key_env, key_value)
+                typer.echo(f"  Stored in OS keychain (service='vantage', username='{api_key_env}').")
+            except Exception as exc:
+                typer.echo(f"  Keychain write failed: {exc}", err=True)
+                typer.echo(
+                    f"  You can set the env var instead:\n"
+                    f"    PowerShell:  [System.Environment]::SetEnvironmentVariable('{api_key_env}', '…', 'User')",
+                    err=True,
+                )
+                raise typer.Exit(1)
+
+    # ── Step 5: write config ─────────────────────────────────────────────────
+    import uuid
+
+    developer_id = str(uuid.uuid4())
+    cfg_path.parent.mkdir(parents=True, exist_ok=True)
+
+    cfg_path.write_text(
+        f"""developer_id = "{developer_id}"
+display_name = "{display_name}"
+session_dirs = []
+project_roots = []
+log_level = "INFO"
+
+[llm]
+provider = "{provider_key}"
+model = "{model}"
+api_key_env = "{api_key_env}"
+endpoint = "{endpoint}"
+
+[embeddings]
+provider = "ollama"
+model = "nomic-embed-text"
+endpoint = "http://localhost:11434"
+
+[ui]
+bind_address = "127.0.0.1"
+port = 7474
+
+[audit]
+enabled = true
+retention_days = 30
+
+[qdrant]
+url = "http://localhost:6333"
+enabled = true
+
+[github]
+token_env = "GITHUB_TOKEN"
+repo = ""
+
+[schedule]
+# Uncomment and set times (UTC) to enable automatic generation.
+# standup = "weekday 09:00"
+# digest = "friday 17:00"
+""",
+        encoding="utf-8",
+    )
+    typer.echo()
+    typer.echo(f"✓ Config written: {cfg_path}")
+
+    # ── Step 6: live connection test ─────────────────────────────────────────
+    typer.echo()
+    typer.echo(f"Testing {provider_label} connection …")
+    cfg = _cfg_mod.load()
+
+    try:
+        from ghost_daemon.models.registry import build_from_config
+        llm = build_from_config(cfg)
+
+        async def _ping():
+            return await llm.complete(
+                messages=[{"role": "user", "content": "Reply with exactly: OK"}],
+                max_tokens=10,
+            )
+
+        reply = asyncio.run(_ping())
+        typer.echo(f"  ✓ Response: {reply.strip()!r}")
+    except EnvironmentError as exc:
+        typer.echo(f"  ✗ Key resolution failed: {exc}", err=True)
+        raise typer.Exit(1)
+    except Exception as exc:
+        typer.echo(f"  ✗ Connection failed: {exc}", err=True)
+        typer.echo("  Config saved, but the provider is not reachable. Fix the key or model and run:")
+        typer.echo("    vantage-ghost check")
+        raise typer.Exit(1)
+
+    # ── Step 7: session directory detection ──────────────────────────────────
+    typer.echo()
+    typer.echo("Session directories:")
+    dirs = cfg.resolved_session_dirs
+    if not dirs:
+        typer.echo("  (none found — Claude Code / Codex sessions will be picked up when they appear)")
+    else:
+        for d in dirs:
+            if d.exists():
+                count = sum(1 for _ in d.rglob("*.jsonl"))
+                typer.echo(f"  ✓ {d}  ({count} session files)")
+            else:
+                typer.echo(f"  ✗ {d}  (not found)")
+
+    # ── Step 8: offer first-draft demo ───────────────────────────────────────
+    typer.echo()
+    typer.echo("─" * 50)
+    typer.echo("Setup complete.")
+    typer.echo()
+    typer.echo("Next steps:")
+    typer.echo("  vantage-ghost digest --since monday    # generate a weekly digest")
+    typer.echo("  vantage-ghost standup                   # yesterday's standup bullets")
+    typer.echo("  vantage-ghost run                       # start the live daemon + UI")
+    typer.echo()
+
+    if skip_demo:
+        return
+
+    run_now = typer.confirm("Generate your first digest right now?", default=True)
+    if not run_now:
+        return
+
+    typer.echo()
+    typer.echo("Launching digest …")
+    typer.echo()
+    try:
+        from ghost_daemon.daemon import GhostDaemon
+        from ghost_daemon.agents.digest_agent import DigestAgent
+
+        daemon = GhostDaemon(cfg)
+        period_start = _parse_since("monday")
+        period_end = datetime.utcnow()
+        agent = DigestAgent(cfg, daemon.llm, daemon.project_map, daemon.tailer, qdrant=daemon.qdrant)
+
+        async def _run():
+            draft = await agent.run(period_start, period_end)
+            return daemon.gate.submit(draft)
+
+        draft_id = asyncio.run(_run())
+        url = f"http://{cfg.ui.bind_address}:{cfg.ui.port}/draft/{draft_id}"
+        typer.echo(f"✓ Draft ready: {url}")
+        _open_or_start_ui(url, cfg, daemon)
+    except Exception as exc:
+        typer.echo(f"Could not generate digest: {exc}", err=True)
+        typer.echo("Try again with: vantage-ghost digest --since monday")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
