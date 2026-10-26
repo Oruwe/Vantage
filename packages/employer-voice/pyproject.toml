@@ -1,7 +1,7 @@
 [project]
 name = "employer-voice"
 version = "0.1.0"
-description = "Add your description here"
+description = "Voice frontend for the Vantage manager agent"
 readme = "README.md"
 authors = [
     { name = "Triven", email = "triven0369@gmail.com" }
@@ -11,6 +11,15 @@ dependencies = [
     "openai>=3.37.0",
     "pipecat-ai[daily,silero]>=1.14.0",
     "pydantic>=2.14.1",
+    "typer>=0.16.0",
+    "httpx>=0.28.0",
+]
+
+[project.optional-dependencies]
+audio = [
+    "sounddevice>=0.4.6",
+    "soundfile>=0.12.1",
+    "numpy>=1.26.0",
 ]
 
 [project.scripts]

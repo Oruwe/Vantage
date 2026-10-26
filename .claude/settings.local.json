@@ -7,7 +7,9 @@
       "Bash(cat C:\\\\\\\\Users\\\\\\\\trive\\\\\\\\AppData\\\\\\\\Local\\\\\\\\Temp\\\\\\\\claude\\\\\\\\C--oruwe-Ganni-Vantage\\\\\\\\2472c937-a3e2-420f-989c-5b1caf797f4e\\\\\\\\tasks\\\\\\\\b8niyhyd1.output)",
       "Bash(findstr /C:\"passed\")",
       "Bash(wait *)",
-      "Bash(python -c \"from anthropic import AsyncAnthropic; help\\(AsyncAnthropic\\(\\).messages.stream\\)\")"
+      "Bash(python -c \"from anthropic import AsyncAnthropic; help\\(AsyncAnthropic\\(\\).messages.stream\\)\")",
+      "PowerShell(uv sync *)",
+      "PowerShell(uv run *)"
     ]
   }
 }
