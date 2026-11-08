@@ -18,16 +18,24 @@ def html() -> str:
     return _INDEX.read_text(encoding="utf-8")
 
 
-def test_agent_sidebar_entry_present(html):
-    assert 'id="nav-agent"' in html
-    assert "nav('agent')" in html
-    # The pulse dot used while the agent is streaming
-    assert 'id="nav-agent-dot"' in html
+def test_agent_fab_entry_present(html):
+    # Agent is accessed via a floating action button that follows the user
+    # across every dashboard view (not a sidebar item).
+    assert 'id="ag-fab"' in html
+    assert 'onclick="toggleAgentFloat()"' in html
+    # The pulse dot used while the agent is streaming moved onto the FAB.
+    assert 'id="ag-fab-dot"' in html
+    # And the panel itself must be a sibling of the main shell so it floats.
+    assert 'id="ag-float"' in html
+    assert 'id="ag-float-body"' in html
 
 
-def test_agent_view_routed_in_nav(html):
-    assert "else if(view==='agent')renderAgent()" in html
-    assert "else if(view==='agent')document.getElementById('nav-agent')" in html
+def test_agent_view_routed_via_float_panel(html):
+    # The old nav('agent') hook still exists for deep-links / command palette,
+    # but it now opens the floating panel instead of swapping #content.
+    assert "if(view==='agent'){openAgentFloat();return;}" in html
+    # renderAgent writes into the float body, not the main content area.
+    assert "getElementById('ag-float-body')" in html
 
 
 def test_agent_renders_dual_column_layout(html):
@@ -72,7 +80,11 @@ def test_agent_tool_call_card_template(html):
 
 
 def test_agent_keyboard_shortcuts_wired(html):
-    assert "S.view !== 'agent'" in html
+    # Agent-specific shortcuts gate on the floating panel being open, not
+    # on S.view (the agent no longer owns the main content area).
+    assert "p.classList.contains('open')" in html
+    # Alt+A toggles the floating panel from anywhere.
+    assert "e.altKey && (e.key==='a' || e.key==='A')" in html
     # `/` focuses, Esc blurs/aborts, `?` opens help
     assert "e.key === '/'" in html
     assert "e.key === 'Escape'" in html
@@ -112,10 +124,11 @@ def test_agent_streaming_state_flag(html):
     assert "AG.streamCtrl.abort()" in html
 
 
-def test_agent_sidebar_label_text(html):
-    # Human-visible label — if the design was ever renamed, the nav/renderer
-    # pair would still work but this would flag the drift.
-    assert "<span>Agent</span>" in html
+def test_agent_float_panel_label_text(html):
+    # Human-visible label on the floating panel header. If the design was
+    # ever renamed, the FAB/renderer pair would still work but this would
+    # flag the drift.
+    assert "Manager AI" in html
 
 
 def test_agent_budget_exhausted_user_feedback(html):

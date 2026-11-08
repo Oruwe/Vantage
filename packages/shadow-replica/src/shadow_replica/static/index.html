@@ -1110,6 +1110,61 @@
   .ag-btn-deny{background:var(--sf2);color:var(--tx2);border:1px solid var(--bd2)}
   .ag-btn-deny:hover:not(:disabled){color:var(--tx)}
   .ag-btn-approve:disabled,.ag-btn-deny:disabled{opacity:.6;cursor:not-allowed}
+
+  /* Floating Manager-AI (FAB + persistent chat panel) */
+  .ag-fab{
+    position:fixed;bottom:22px;right:22px;z-index:9000;
+    width:54px;height:54px;border-radius:50%;border:none;cursor:pointer;
+    background:linear-gradient(135deg,var(--p) 0%,var(--p2) 100%);color:var(--bg);
+    display:flex;align-items:center;justify-content:center;
+    box-shadow:0 6px 24px -8px oklch(63% .18 280 / .5),0 2px 6px rgba(0,0,0,.25);
+    transition:transform .18s ease,box-shadow .18s ease;
+  }
+  .ag-fab:hover{transform:translateY(-2px) scale(1.04);box-shadow:0 10px 32px -8px oklch(63% .18 280 / .6)}
+  .ag-fab:active{transform:translateY(0) scale(.98)}
+  .ag-fab.hidden{display:none}
+  .ag-fab-dot{
+    position:absolute;top:8px;right:8px;width:9px;height:9px;border-radius:50%;
+    background:var(--te);box-shadow:0 0 0 2px var(--bg);
+    animation:agFabPulse 1.2s ease-in-out infinite;
+  }
+  @keyframes agFabPulse{0%,100%{opacity:1}50%{opacity:.4}}
+
+  .ag-float{
+    position:fixed;bottom:88px;right:22px;z-index:8990;
+    width:560px;height:min(680px,calc(100vh - 120px));
+    background:var(--bg);border:1px solid var(--bd2);border-radius:var(--rxl);
+    box-shadow:var(--shl),0 12px 48px -16px rgba(0,0,0,.4);
+    display:none;flex-direction:column;overflow:hidden;transform-origin:bottom right;
+  }
+  .ag-float.open{display:flex;animation:agFloatIn .18s cubic-bezier(.2,.9,.3,1)}
+  @keyframes agFloatIn{from{opacity:0;transform:scale(.94) translateY(8px)}to{opacity:1;transform:scale(1) translateY(0)}}
+  .ag-float-head{
+    display:flex;align-items:center;gap:6px;padding:10px 12px;
+    border-bottom:1px solid var(--bd);background:var(--sf);flex-shrink:0;
+  }
+  .ag-float-title{
+    font-size:12.5px;font-weight:600;color:var(--tx);letter-spacing:-.005em;
+    display:flex;align-items:center;gap:8px;flex:1;
+  }
+  .ag-float-title svg{color:var(--p2)}
+  .ag-float-head button{
+    background:transparent;border:none;color:var(--tx3);
+    width:26px;height:26px;border-radius:6px;cursor:pointer;
+    display:flex;align-items:center;justify-content:center;transition:background .12s,color .12s;
+  }
+  .ag-float-head button:hover{background:var(--sf2);color:var(--tx)}
+  .ag-float-body{flex:1;min-height:0;display:flex;flex-direction:column}
+  .ag-float .ag-wrap{grid-template-columns:170px 1fr}
+  .ag-float .ag-head{padding:10px 14px}
+  .ag-float .ag-head h1{font-size:14px}
+  .ag-float .ag-feed{padding:14px}
+  .ag-float .ag-footer{padding:10px 14px 12px}
+  @media (max-width:720px){
+    .ag-float{width:calc(100vw - 24px);right:12px;bottom:84px;height:min(72vh,620px)}
+    .ag-float .ag-wrap{grid-template-columns:1fr}
+    .ag-float .ag-side{display:none}
+  }
 }
 
 /* ══ DAILY BRIEF ═══════════════════════════════════════════════════════ */
@@ -1615,11 +1670,6 @@
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3v12"/><path d="M18 9v12"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="6" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
           <span>Engineering Threads</span>
         </div>
-        <div class="sb-item" id="nav-agent" onclick="nav('agent')">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><circle cx="9" cy="10" r="1"/><circle cx="12" cy="10" r="1"/><circle cx="15" cy="10" r="1"/></svg>
-          <span>Agent</span>
-          <span id="nav-agent-dot" class="wt-pulse" style="margin-left:auto;display:none" title="thinking"></span>
-        </div>
       </div>
       <div class="sb-hr"></div>
       <div class="sb-sec">
@@ -1700,6 +1750,27 @@
       </button>
     </div>
   </div>
+</div>
+
+<!-- ── Floating Manager-AI (always-visible FAB + chat panel) ─────────── -->
+<button id="ag-fab" class="ag-fab hidden" onclick="toggleAgentFloat()" title="Ask the AI manager (Alt+A)">
+  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><circle cx="9" cy="10" r="1" fill="currentColor"/><circle cx="12" cy="10" r="1" fill="currentColor"/><circle cx="15" cy="10" r="1" fill="currentColor"/></svg>
+  <span id="ag-fab-dot" class="ag-fab-dot" style="display:none" title="thinking"></span>
+</button>
+<div id="ag-float" class="ag-float" aria-hidden="true">
+  <div class="ag-float-head">
+    <div class="ag-float-title">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+      Manager AI
+    </div>
+    <button onclick="agNewConversation()" title="New thread">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    </button>
+    <button onclick="closeAgentFloat()" title="Close (Esc)">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+  </div>
+  <div id="ag-float-body" class="ag-float-body"></div>
 </div>
 
 <!-- ── Command Palette (Cmd/Ctrl+K) ──────────────────────────────────── -->
@@ -1889,15 +1960,17 @@ function logout(){
   document.getElementById('app').hidden=true;
   document.getElementById('login').hidden=false;
   document.getElementById('tok-in').value='';
+  hideAgentFab();
 }
 
 /* ══ Init ═══════════════════════════════════════════════════════════ */
 async function init(){
   document.getElementById('tok-in').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin()});
   document.addEventListener('keydown',e=>{
+    const agentOpen=document.getElementById('ag-float')?.classList.contains('open');
     if(e.key==='Escape'){closeModal();closeQuery()}
-    if(e.key==='/'&&document.activeElement.tagName!=='TEXTAREA'&&document.activeElement.tagName!=='INPUT'){e.preventDefault();openQuery()}
-    if(e.key==='r'&&document.activeElement.tagName!=='TEXTAREA'&&document.activeElement.tagName!=='INPUT')manualRefresh();
+    if(e.key==='/'&&!agentOpen&&document.activeElement.tagName!=='TEXTAREA'&&document.activeElement.tagName!=='INPUT'){e.preventDefault();openQuery()}
+    if(e.key==='r'&&!agentOpen&&document.activeElement.tagName!=='TEXTAREA'&&document.activeElement.tagName!=='INPUT')manualRefresh();
   });
   const saved=sessionStorage.getItem('vt');
   if(saved){
@@ -1920,6 +1993,7 @@ async function launchApp(){
   setInterval(autoRefresh,30000);
   wtConnect();  // open wiretap SSE eagerly so the sidebar pulse goes live
   inLoad().catch(()=>{});  // populate initiatives in the background for Swarm tinting
+  showAgentFab();
 }
 
 function tickClock(){
@@ -2020,6 +2094,7 @@ function updateLiveBadge(){
 
 /* ══ Navigation (View Transitions) ══════════════════════════════════ */
 function nav(view){
+  if(view==='agent'){openAgentFloat();return;}
   S.view=view;
   document.querySelectorAll('.sb-item,.sb-action').forEach(e=>e.classList.remove('active'));
   if(view==='overview')document.getElementById('nav-ov')?.classList.add('active');
@@ -2029,7 +2104,6 @@ function nav(view){
   else if(view==='initiatives')document.getElementById('nav-inits')?.classList.add('active');
   else if(view==='resolutions')document.getElementById('nav-rez')?.classList.add('active');
   else if(view==='threads')document.getElementById('nav-threads')?.classList.add('active');
-  else if(view==='agent')document.getElementById('nav-agent')?.classList.add('active');
   else document.querySelector(`[data-did="${view}"]`)?.classList.add('active');
 
   const go=()=>{
@@ -2041,7 +2115,6 @@ function nav(view){
     else if(view==='initiatives')renderInitiatives();
     else if(view==='resolutions')renderResolutions();
     else if(view==='threads')renderThreads();
-    else if(view==='agent')renderAgent();
     else loadDev(view);
   };
   if(document.startViewTransition)document.startViewTransition(go);
@@ -4087,6 +4160,59 @@ document.addEventListener('keydown', (e)=>{
   }
 });
 
+/* ══ Floating Manager-AI (FAB + persistent chat panel) ═══════════════ */
+function showAgentFab(){
+  const fab = document.getElementById('ag-fab');
+  if(fab)fab.classList.remove('hidden');
+}
+function hideAgentFab(){
+  const fab = document.getElementById('ag-fab');
+  if(fab)fab.classList.add('hidden');
+  closeAgentFloat();
+}
+function openAgentFloat(){
+  const p = document.getElementById('ag-float');
+  const body = document.getElementById('ag-float-body');
+  if(!p || !body)return;
+  p.classList.add('open');
+  p.setAttribute('aria-hidden', 'false');
+  if(!body.dataset.rendered){
+    renderAgent();
+    body.dataset.rendered = '1';
+  }
+  setTimeout(()=>{ document.getElementById('ag-input')?.focus(); }, 180);
+}
+function closeAgentFloat(){
+  const p = document.getElementById('ag-float');
+  if(!p)return;
+  p.classList.remove('open');
+  p.setAttribute('aria-hidden', 'true');
+}
+function toggleAgentFloat(){
+  const p = document.getElementById('ag-float');
+  if(!p)return;
+  if(p.classList.contains('open'))closeAgentFloat();
+  else openAgentFloat();
+}
+/* Alt+A toggles the panel; Esc closes it when input isn't the target. */
+document.addEventListener('keydown', (e)=>{
+  if(e.altKey && (e.key==='a' || e.key==='A')){
+    if(!S.token)return;
+    e.preventDefault();
+    toggleAgentFloat();
+    return;
+  }
+  if(e.key==='Escape'){
+    const p = document.getElementById('ag-float');
+    if(p && p.classList.contains('open')){
+      const tag = (document.activeElement?.tagName || '').toLowerCase();
+      if(tag !== 'textarea' && tag !== 'input'){
+        closeAgentFloat();
+      }
+    }
+  }
+});
+
 /* ══ AGENT (M13 Phase 3 — chat UI) ══════════════════════════════════ */
 const AG = {
   conversation_id: null,       // currently loaded thread, or null for a fresh one
@@ -4098,7 +4224,8 @@ const AG = {
 };
 
 async function renderAgent(){
-  const el = document.getElementById('content');
+  const el = document.getElementById('ag-float-body');
+  if(!el)return;
   el.innerHTML = `
     <div class="ag-wrap">
       <aside class="ag-side">
@@ -4323,7 +4450,7 @@ async function agSend(){
   AG.streaming = true;
   const sendBtn = document.getElementById('ag-send');
   if(sendBtn)sendBtn.disabled = true;
-  const navDot = document.getElementById('nav-agent-dot');
+  const navDot = document.getElementById('ag-fab-dot');
   if(navDot)navDot.style.display = 'inline-block';
   AG.pending.clear();
   AG.feed = feed;
@@ -4472,7 +4599,7 @@ async function agResolveApproval(tool_use_id, approved, card, feed){
   AG.streaming = true;
   const sendBtn = document.getElementById('ag-send');
   if(sendBtn)sendBtn.disabled = true;
-  const navDot = document.getElementById('nav-agent-dot');
+  const navDot = document.getElementById('ag-fab-dot');
   if(navDot)navDot.style.display = 'inline-block';
 
   await agConsumeStream('/ui/api/chat/approve', {
@@ -4558,9 +4685,11 @@ function agParseSSE(chunk){
 function agHelpOpen(){document.getElementById('ag-help')?.classList.add('open')}
 function agHelpClose(){document.getElementById('ag-help')?.classList.remove('open')}
 
-/* Global shortcuts for the Agent view */
+/* Global shortcuts for the Agent view (while the floating panel is open) */
 document.addEventListener('keydown', (e)=>{
-  if(!S.token || S.view !== 'agent')return;
+  if(!S.token)return;
+  const p = document.getElementById('ag-float');
+  if(!p || !p.classList.contains('open'))return;
   const inInput = /^(INPUT|TEXTAREA)$/.test(document.activeElement?.tagName || '');
   if(e.key === '/' && !inInput){
     e.preventDefault();

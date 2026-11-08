@@ -16,14 +16,12 @@ import json
 import logging
 import math
 import re
-from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from vantage.schemas import SemanticCollision
 
 if TYPE_CHECKING:
-    from shadow_replica.storage.received_store import ReceivedArtifactRow, ReceivedStore
-    from shadow_replica.config import TrustedDev
+    from shadow_replica.storage.received_store import ReceivedStore
 
 logger = logging.getLogger(__name__)
 

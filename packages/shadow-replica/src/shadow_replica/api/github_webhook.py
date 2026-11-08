@@ -25,7 +25,7 @@ import json
 import logging
 from collections import deque
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse

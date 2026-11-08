@@ -16,7 +16,6 @@ import asyncio
 import json
 import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock
 from types import SimpleNamespace
 
 import pytest
@@ -453,7 +452,6 @@ def test_chat_endpoint_e2e_with_injected_agent(replica_tmp, monkeypatch):
     Monkeypatches `build_manager_agent` so the app wires in our fake agent
     end-to-end — same route code path a real manager would hit.
     """
-    from shadow_replica.agent.chat_memory import ChatMemory
     from shadow_replica.agent.manager_agent import ManagerAgent
 
     fake = _FakeAnthropic([

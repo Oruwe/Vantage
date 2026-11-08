@@ -21,7 +21,6 @@ import json
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -383,7 +382,6 @@ def test_approve_endpoint_503_without_agent(client):
 
 
 def test_pending_endpoint_404_without_pending(client, replica_tmp, monkeypatch):
-    from shadow_replica.agent.chat_memory import ChatMemory
     from shadow_replica.agent.manager_agent import ManagerAgent
 
     fake = _FakeAnthropic([])
@@ -394,7 +392,7 @@ def test_pending_endpoint_404_without_pending(client, replica_tmp, monkeypatch):
     monkeypatch.setattr("shadow_replica.agent.manager_agent.build_manager_agent", _fake_build)
 
     from shadow_replica.app import build_app
-    from shadow_replica.config import load, TrustedDev
+    from shadow_replica.config import load
     cfg = load()
     cfg.qdrant.enabled = False
     app = build_app(cfg)
@@ -406,7 +404,6 @@ def test_pending_endpoint_404_without_pending(client, replica_tmp, monkeypatch):
 
 def test_approve_endpoint_e2e(replica_tmp, monkeypatch):
     """Full flow: /chat/stream pauses, GET /chat/pending/{id}, POST /chat/approve resumes."""
-    from shadow_replica.agent.chat_memory import ChatMemory
     from shadow_replica.agent.manager_agent import ManagerAgent
 
     fake = _FakeAnthropic([

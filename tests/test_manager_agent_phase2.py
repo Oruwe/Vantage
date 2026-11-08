@@ -334,7 +334,6 @@ def test_stream_endpoint_requires_message(client):
 
 def test_stream_endpoint_e2e_with_injected_agent(replica_tmp, monkeypatch):
     """Full SSE round-trip: parse the event stream."""
-    from shadow_replica.agent.chat_memory import ChatMemory
     from shadow_replica.agent.manager_agent import ManagerAgent
 
     fake = _FakeAnthropic([

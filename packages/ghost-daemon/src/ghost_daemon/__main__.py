@@ -471,7 +471,7 @@ def pair_command(
     name: Annotated[str, typer.Option("--name", "-n", help="How the manager should label you")] = "",
     github_login: Annotated[str, typer.Option("--github-login", "-g", help="Your GitHub username (for webhook attribution). Auto-detected from git config if omitted.")] = "",
     channels: Annotated[list[str], typer.Option("--channels", "-c", help="Channels to share (default: all common ones)")] = [
-        "weekly_digest", "commit_report", "standup", "pr_draft", "quick_note", "bug_resolution",
+        "weekly_digest", "commit_report", "standup", "pr_draft", "quick_note",
     ],
 ):
     """Create a subscriber and print a one-string pairing code for the manager.
@@ -775,7 +775,6 @@ def policy_edit(
     policy = load_policy(row.id, cfg.vantage_dir)
     policy_path = save_policy(policy, cfg.vantage_dir)
 
-    import sys
     editor = os.environ.get("EDITOR", "notepad" if sys.platform == "win32" else "nano")
     typer.echo(f"Opening policy for '{row.name}' in {editor}...")
     subprocess.call([editor, str(policy_path)])
@@ -946,8 +945,6 @@ def service_install(
     mode: Annotated[str, typer.Option(help="Installer type: auto, windows, systemd, launchd")] = "auto",
 ):
     """Register vantage-ghost run as a background service / scheduled task."""
-    import sys
-    import shutil
 
     resolved = mode
     if mode == "auto":
@@ -974,7 +971,6 @@ def service_uninstall(
     mode: Annotated[str, typer.Option(help="Installer type: auto, windows, systemd, launchd")] = "auto",
 ):
     """Remove the Vantage background service registration."""
-    import sys
 
     resolved = mode
     if mode == "auto":
@@ -999,7 +995,6 @@ def service_uninstall(
 @service_app.command("status")
 def service_status():
     """Check whether the Vantage service is installed and running."""
-    import sys
     import subprocess
 
     if sys.platform == "win32":

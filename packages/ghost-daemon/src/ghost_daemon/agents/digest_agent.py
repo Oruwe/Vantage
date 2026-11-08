@@ -9,7 +9,7 @@ from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
-from vantage.schemas import DraftPayload, RedactedContext, Turn, WeeklyDigest
+from vantage.schemas import DraftPayload, RedactedContext, WeeklyDigest
 from ghost_daemon.config import Config
 from ghost_daemon.models.registry import LLMProvider
 from ghost_daemon.redaction.scrubber import scrub

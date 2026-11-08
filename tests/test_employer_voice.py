@@ -1,20 +1,17 @@
-"""Tests for the employer-voice package.
+"""Tests for the employer-voice (text chat) package.
 
 Covers:
   - Config round-trip (defaults + persistence + conversation_id update)
   - ReplicaClient.chat / chat_stream against a mocked httpx transport
   - ReplicaClient.list_conversations
-  - SSE parser handles multi-line data + comments + empty events
+  - SSE parser handles multi-line data + comments
   - CLI `init` writes config, `ask` prints assistant text, `conversations`
     renders a list, `reset` clears the saved id
-  - voice_turn raises VoiceIOError when sounddevice is missing
-  - voice_turn happy path with mocked mic/STT/TTS/speaker
 """
 from __future__ import annotations
 
 import asyncio
 import json
-import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -45,8 +42,6 @@ def test_config_defaults_when_missing(tmp_cfg_path: Path) -> None:
     cfg = cfgmod.load(tmp_cfg_path)
     assert cfg.replica.url.startswith("http")
     assert cfg.replica.manager_token == ""
-    assert cfg.voice.stt_model == "whisper-1"
-    assert cfg.voice.tts_voice == "alloy"
     assert cfg.conversation_id == ""
 
 
@@ -55,7 +50,6 @@ def test_config_roundtrip(tmp_cfg_path: Path) -> None:
 
     cfg = cfgmod.VoiceConfig(
         replica=cfgmod.ReplicaTarget(url="http://example:7475", manager_token="vsm_abc"),
-        voice=cfgmod.VoiceSettings(tts_voice="echo", sample_rate=16000),
         conversation_id="conv-xyz",
     )
     cfgmod.save(cfg, tmp_cfg_path)
@@ -64,8 +58,6 @@ def test_config_roundtrip(tmp_cfg_path: Path) -> None:
     loaded = cfgmod.load(tmp_cfg_path)
     assert loaded.replica.url == "http://example:7475"
     assert loaded.replica.manager_token == "vsm_abc"
-    assert loaded.voice.tts_voice == "echo"
-    assert loaded.voice.sample_rate == 16000
     assert loaded.conversation_id == "conv-xyz"
 
 
@@ -75,14 +67,6 @@ def test_update_conversation_id_persists(tmp_cfg_path: Path) -> None:
     cfgmod.save(cfgmod.VoiceConfig(replica=cfgmod.ReplicaTarget(manager_token="vsm_x")), tmp_cfg_path)
     cfgmod.update_conversation_id("new-id", tmp_cfg_path)
     assert cfgmod.load(tmp_cfg_path).conversation_id == "new-id"
-
-
-def test_openai_api_key_reads_configured_env(monkeypatch, tmp_cfg_path: Path) -> None:
-    from employer_voice import config as cfgmod
-
-    monkeypatch.setenv("MY_OAI_KEY", "sk-live-123")
-    cfg = cfgmod.VoiceConfig(voice=cfgmod.VoiceSettings(openai_api_key_env="MY_OAI_KEY"))
-    assert cfg.openai_api_key == "sk-live-123"
 
 
 # ── Replica client ──────────────────────────────────────────────────────────
@@ -440,94 +424,20 @@ def test_cli_reset_clears_conversation_id(cli_runner: CliRunner, tmp_cfg_path: P
     assert cfgmod.load(tmp_cfg_path).conversation_id == ""
 
 
-# ── Voice I/O (soft-import contract) ────────────────────────────────────────
+# ── Smoke: package has no voice/talk surface ────────────────────────────────
 
 
-def test_mic_raises_voice_io_error_when_sounddevice_missing(monkeypatch) -> None:
-    from employer_voice.voice import mic, VoiceIOError
-
-    # Simulate sounddevice/numpy not being installed.
-    monkeypatch.setitem(sys.modules, "sounddevice", None)
-    monkeypatch.setitem(sys.modules, "numpy", None)
-    with pytest.raises(VoiceIOError, match="sounddevice"):
-        mic.record_until_silence()
+def test_voice_subpackage_is_gone() -> None:
+    with pytest.raises(ModuleNotFoundError):
+        import employer_voice.voice  # noqa: F401
 
 
-def test_speaker_raises_voice_io_error_when_deps_missing(monkeypatch) -> None:
-    from employer_voice.voice import speaker, VoiceIOError
+def test_cli_has_no_talk_command(cli_runner: CliRunner) -> None:
+    from employer_voice.cli import app
 
-    monkeypatch.setitem(sys.modules, "sounddevice", None)
-    monkeypatch.setitem(sys.modules, "soundfile", None)
-    monkeypatch.setitem(sys.modules, "numpy", None)
-    with pytest.raises(VoiceIOError):
-        speaker.play_audio_bytes(b"\x00\x01")
-
-
-def test_voice_turn_requires_openai_key(tmp_cfg_path: Path, monkeypatch) -> None:
-    from employer_voice import config as cfgmod
-    from employer_voice import session as sess
-    from employer_voice.voice import VoiceIOError
-
-    cfgmod.save(cfgmod.VoiceConfig(
-        replica=cfgmod.ReplicaTarget(url="http://x", manager_token="vsm_t"),
-        voice=cfgmod.VoiceSettings(openai_api_key_env="DEFINITELY_NOT_SET_XYZ"),
-    ), tmp_cfg_path)
-    monkeypatch.delenv("DEFINITELY_NOT_SET_XYZ", raising=False)
-
-    with pytest.raises(VoiceIOError, match="OpenAI key"):
-        asyncio.run(sess.voice_turn(config_path=tmp_cfg_path))
-
-
-def test_voice_turn_happy_path_with_mocks(tmp_cfg_path: Path, monkeypatch) -> None:
-    """mic → stt → ask_stream → tts → speaker, all mocked."""
-    from employer_voice import config as cfgmod
-    from employer_voice import session as sess
-
-    cfgmod.save(cfgmod.VoiceConfig(
-        replica=cfgmod.ReplicaTarget(url="http://x", manager_token="vsm_t"),
-        voice=cfgmod.VoiceSettings(openai_api_key_env="FAKE_KEY_VAR"),
-    ), tmp_cfg_path)
-    monkeypatch.setenv("FAKE_KEY_VAR", "sk-fake")
-
-    recording = type("Rec", (), {"wav_bytes": b"RIFFfake", "duration_seconds": 1.0, "sample_rate": 24000})()
-    speaker_calls: list[bytes] = []
-
-    def _fake_record(**_kw):
-        return recording
-
-    async def _fake_stt(wav_bytes, *, api_key, model):
-        assert wav_bytes == b"RIFFfake"
-        return "what's up"
-
-    async def _fake_stream(self, message, conversation_id=None, *, client=None):
-        assert message == "what's up"
-        for ev in [
-            {"event": "started", "conversation_id": "conv-v"},
-            {"event": "message_delta", "content": "All good."},
-            {"event": "done", "conversation_id": "conv-v", "loops": 1},
-        ]:
-            yield ev
-
-    async def _fake_tts(text, *, api_key, model, voice):
-        assert "All good." in text
-        return b"MP3fake"
-
-    def _fake_play(audio_bytes):
-        speaker_calls.append(audio_bytes)
-
-    with patch("employer_voice.voice.mic.record_until_silence", _fake_record), \
-         patch("employer_voice.voice.transcription.transcribe_wav", _fake_stt), \
-         patch("employer_voice.replica_client.ReplicaClient.chat_stream", _fake_stream), \
-         patch("employer_voice.voice.synthesis.synthesize", _fake_tts), \
-         patch("employer_voice.voice.speaker.play_audio_bytes", _fake_play):
-        summary = asyncio.run(sess.voice_turn(config_path=tmp_cfg_path))
-
-    assert summary.assistant_text == "All good."
-    assert speaker_calls == [b"MP3fake"]
-    assert cfgmod.load(tmp_cfg_path).conversation_id == "conv-v"
-
-
-# ── Smoke: package exports a main entrypoint ────────────────────────────────
+    result = cli_runner.invoke(app, ["talk"])
+    # Typer prints "No such command 'talk'" and exits non-zero.
+    assert result.exit_code != 0
 
 
 def test_package_has_main_entrypoint() -> None:

@@ -384,7 +384,6 @@ def test_semantic_excerpt_handles_push_commits():
 # ── Brief & Initiatives integration ────────────────────────────────────────
 
 def test_github_event_shipped_in_brief_when_merged(client):
-    from datetime import datetime, timezone, timedelta
     secret = _add_repo(client)
     _add_dev(client, "alice", github_login="alice-dev")
 

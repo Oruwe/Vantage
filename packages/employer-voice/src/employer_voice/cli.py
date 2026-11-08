@@ -1,11 +1,9 @@
-"""Typer CLI for employer-voice.
+"""Typer CLI for employer-voice (text chat frontend).
 
 Commands:
   init           Write a starter config with the manager token + replica URL.
-  config         Print the current config (minus the token).
-  ask MESSAGE    One-shot text turn against the manager agent.
-  stream MESSAGE One-shot streamed turn (shows tool calls as they run).
-  talk           Enter a voice loop: speak → listen. Ctrl-C to exit.
+  config         Print the current config (token masked).
+  ask MESSAGE    One text turn against the manager agent (optional --stream).
   conversations  List recent chats (ids + titles + turn counts).
   reset          Forget the saved conversation_id so the next turn starts fresh.
 """
@@ -19,7 +17,7 @@ import typer
 
 from employer_voice import config as _cfg
 
-app = typer.Typer(name="employer-voice", help="Voice frontend for the Vantage manager agent.")
+app = typer.Typer(name="employer-voice", help="Text chat frontend for the Vantage manager agent.")
 
 
 def _resolve_config_path(custom: str) -> Optional[Path]:
@@ -30,8 +28,6 @@ def _resolve_config_path(custom: str) -> Optional[Path]:
 def init(
     manager_token: Annotated[str, typer.Option("--manager-token", "-t", help="Manager token (vsm_...). Prompted if omitted.")] = "",
     replica_url: Annotated[str, typer.Option("--replica-url", "-u")] = "http://127.0.0.1:7475",
-    openai_api_key_env: Annotated[str, typer.Option("--openai-key-env")] = "OPENAI_API_KEY",
-    tts_voice: Annotated[str, typer.Option("--tts-voice")] = "alloy",
     config: Annotated[str, typer.Option("--config")] = "",
     force: Annotated[bool, typer.Option("--force/--no-force", help="Overwrite an existing config.")] = False,
 ) -> None:
@@ -50,14 +46,11 @@ def init(
 
     cfg = _cfg.VoiceConfig(
         replica=_cfg.ReplicaTarget(url=replica_url, manager_token=manager_token.strip()),
-        voice=_cfg.VoiceSettings(openai_api_key_env=openai_api_key_env, tts_voice=tts_voice),
     )
     written = _cfg.save(cfg, path)
     typer.echo(f"Wrote config to {written}")
     typer.echo(f"  Replica URL      : {cfg.replica.url}")
     typer.echo(f"  Manager token    : {_mask(cfg.replica.manager_token)}")
-    typer.echo(f"  OpenAI key env   : {cfg.voice.openai_api_key_env} (currently {'set' if cfg.openai_api_key else 'EMPTY'})")
-    typer.echo(f"  TTS voice        : {cfg.voice.tts_voice}")
 
 
 @app.command("config")
@@ -68,12 +61,6 @@ def show_config(
     cfg = _cfg.load(_resolve_config_path(config))
     typer.echo(f"Replica URL      : {cfg.replica.url}")
     typer.echo(f"Manager token    : {_mask(cfg.replica.manager_token)}")
-    typer.echo(f"OpenAI key env   : {cfg.voice.openai_api_key_env} (currently {'set' if cfg.openai_api_key else 'EMPTY'})")
-    typer.echo(f"STT model        : {cfg.voice.stt_model}")
-    typer.echo(f"TTS model/voice  : {cfg.voice.tts_model} / {cfg.voice.tts_voice}")
-    typer.echo(f"Sample rate      : {cfg.voice.sample_rate} Hz")
-    typer.echo(f"Silence cutoff   : {cfg.voice.silence_threshold} RMS for {cfg.voice.silence_seconds}s")
-    typer.echo(f"Max record       : {cfg.voice.max_record_seconds}s")
     if cfg.conversation_id:
         typer.echo(f"Saved convo id   : {cfg.conversation_id}")
 
@@ -107,38 +94,6 @@ def ask(
     except Exception as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=1)
-
-
-@app.command("talk")
-def talk(
-    turns: Annotated[int, typer.Option("--turns", help="How many turns before auto-exit. 0 = until Ctrl-C.")] = 0,
-    silent: Annotated[bool, typer.Option("--silent/--speak", help="Skip TTS playback (useful for debugging).")] = False,
-    config: Annotated[str, typer.Option("--config")] = "",
-) -> None:
-    """Voice loop: speak, get a spoken reply, repeat."""
-    path = _resolve_config_path(config)
-    from employer_voice import session as _sess
-    from employer_voice.voice import VoiceIOError
-
-    typer.echo("Voice loop started. Ctrl-C to exit.")
-    turn_count = 0
-    try:
-        while True:
-            typer.echo(f"\n[turn {turn_count + 1}] Listening…")
-            try:
-                summary = asyncio.run(_sess.voice_turn(
-                    config_path=path,
-                    speak_response=not silent,
-                ))
-            except VoiceIOError as exc:
-                typer.echo(f"Audio error: {exc}", err=True)
-                raise typer.Exit(code=2)
-            typer.echo(f"[agent] {summary.assistant_text}")
-            turn_count += 1
-            if turns and turn_count >= turns:
-                break
-    except KeyboardInterrupt:
-        typer.echo("\nStopped.")
 
 
 @app.command("conversations")
@@ -178,7 +133,7 @@ def conversations(
 def reset(
     config: Annotated[str, typer.Option("--config")] = "",
 ) -> None:
-    """Forget the saved conversation_id so the next ask/talk starts fresh."""
+    """Forget the saved conversation_id so the next ask starts fresh."""
     path = _resolve_config_path(config)
     cfg = _cfg.load(path)
     if not cfg.conversation_id:

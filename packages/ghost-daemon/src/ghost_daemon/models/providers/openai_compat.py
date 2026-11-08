@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 
 from openai import AsyncOpenAI
 from ghost_daemon.models.providers._keychain import resolve_api_key

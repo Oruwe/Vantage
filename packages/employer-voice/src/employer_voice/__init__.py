@@ -1,8 +1,7 @@
-"""employer-voice — voice frontend for the Vantage manager agent.
+"""employer-voice — text chat frontend for the Vantage manager agent.
 
-Connects a local microphone + speaker to the shadow-replica manager agent
-over its /ui/api/chat/stream SSE endpoint. Also exposes a text-only `ask`
-mode so the package is useful (and testable) without audio hardware.
+Lightweight CLI that connects to the shadow-replica over its
+``/ui/api/chat`` and ``/ui/api/chat/stream`` endpoints. No audio.
 """
 from __future__ import annotations
 

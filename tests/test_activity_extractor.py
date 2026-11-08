@@ -2,13 +2,11 @@ from __future__ import annotations
 
 from datetime import datetime
 
-import pytest
 
 from vantage.schemas import Turn
 from ghost_daemon.agents.activity_extractor import (
     extract_activity_signals,
     _extract_branch,
-    _extract_path,
 )
 
 

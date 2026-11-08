@@ -4,7 +4,6 @@ import hashlib
 import math
 import re
 from collections import Counter
-from dataclasses import dataclass
 from fnmatch import fnmatch
 
 from vantage.schemas import Redaction, RedactedContext

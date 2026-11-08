@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 import uvicorn
@@ -215,7 +214,6 @@ class GhostDaemon:
     async def index_approved(self, approved) -> None:
         """Embed and store an approved artifact in Qdrant for historical context retrieval."""
         try:
-            import json as _json
             payload = approved.payload
             text = _artifact_text(approved.artifact_type, payload)
             vec = await self.llm.embed(text)

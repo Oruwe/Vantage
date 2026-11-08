@@ -9,12 +9,10 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
-import json
 import sqlite3
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable
 
 from vantage.schemas import ChatConversation, ChatTurn
 

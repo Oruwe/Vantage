@@ -9,7 +9,14 @@
       "Bash(wait *)",
       "Bash(python -c \"from anthropic import AsyncAnthropic; help\\(AsyncAnthropic\\(\\).messages.stream\\)\")",
       "PowerShell(uv sync *)",
-      "PowerShell(uv run *)"
+      "PowerShell(uv run *)",
+      "PowerShell(\\(Get-Item \"C:\\\\oruwe\\\\Ganni\\\\Vantage\\\\packages\\\\shadow-replica\\\\src\\\\shadow_replica\\\\static\\\\index.html\"\\).Length; \\(Get-Content \"C:\\\\oruwe\\\\Ganni\\\\Vantage\\\\packages\\\\shadow-replica\\\\src\\\\shadow_replica\\\\static\\\\index.html\" | Measure-Object -Line\\).Lines)",
+      "Bash(tasklist)",
+      "Bash(findstr /i pytest)",
+      "Bash(findstr /i python)",
+      "Read(//c/Users/trive/AppData/Local/Temp/claude/C--oruwe-Ganni-Vantage/d083f11e-c42d-4fc5-a053-ddf74cec387e/tasks/**)",
+      "Bash(findstr /i voice employer)",
+      "Bash(uv sync *)"
     ]
   }
 }

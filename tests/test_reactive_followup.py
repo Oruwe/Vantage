@@ -26,8 +26,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from vantage.schemas import (
-    ActivitySignals, PolicyDecision, ProbeRequest, ProbeResponse,
-    RedactionLevel, SessionSnapshot,
+    ActivitySignals, PolicyDecision, ProbeRequest, RedactionLevel, SessionSnapshot,
 )
 
 
@@ -254,7 +253,6 @@ def test_check_suite_failure_is_trigger():
 # ── Follow-up uses cached activity ─────────────────────────────────────────
 
 def test_followup_populates_summary_from_cached_activity(client):
-    import time
     secret = _add_repo(client)
     _add_dev(client)
     hub = _get_hub(client)
