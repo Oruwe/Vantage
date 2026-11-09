@@ -54,6 +54,25 @@ def test_cooldown_suppresses_repeat_alerts():
     assert second == []
 
 
+def test_first_alert_fires_on_fresh_clocks(monkeypatch):
+    """Regression: on a freshly-booted VM (CI), time.monotonic() can return
+    a small value. Earlier versions used 0.0 as the 'never-alerted' sentinel,
+    which made ``now - 0.0 < _COOLDOWN`` incorrectly true and suppressed
+    the first alert. Confirm None-sentinel behavior.
+    """
+    import shadow_replica.collision.detector as mod
+    fake_now = {"t": 1.0}  # pretend process just started
+    monkeypatch.setattr(mod.time, "monotonic", lambda: fake_now["t"])
+
+    d = CollisionDetector(threshold=0.3)
+    d.ingest(_b("alice", "vantage", ["x.py", "y.py"]))
+    fake_now["t"] = 1.5
+    cands = d.ingest(_b("bob", "vantage", ["x.py", "y.py"]))
+    assert len(cands) == 1, (
+        "first-ever alert must fire even when time.monotonic() is small"
+    )
+
+
 def test_snapshot_returns_latest_per_developer():
     d = CollisionDetector()
     d.ingest(_b("alice", "r", ["one.py"]))

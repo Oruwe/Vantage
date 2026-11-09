@@ -113,4 +113,10 @@ jobs:
       - name: Run full pytest suite
         env:
           VANTAGE_OVERRIDES_DB: ${{ steps.overrides.outputs.ov_db }}
+          # Ghost-daemon's config loader calls the OS keychain when the env
+          # var isn't present; Linux CI has no keychain backend and raises.
+          # Tests don't hit the LLM — a placeholder is enough to short-circuit
+          # the lookup.
+          GROQ_API_KEY: ci-placeholder-not-used
+          ANTHROPIC_API_KEY: ci-placeholder-not-used
         run: uv run pytest tests/ -q --tb=short

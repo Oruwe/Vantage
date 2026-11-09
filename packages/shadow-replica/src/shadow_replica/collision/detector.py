@@ -67,8 +67,12 @@ class CollisionDetector:
             if jaccard < self._threshold:
                 continue
             pair = tuple(sorted((beacon.developer_id, other_dev)))
-            last = self._last_alert.get(pair, 0.0)
-            if now - last < _COOLDOWN:
+            last = self._last_alert.get(pair)
+            # None = pair has never fired. Using 0.0 as a sentinel is wrong
+            # because time.monotonic() may return a small value on freshly
+            # booted VMs, making ``now - 0.0 < _COOLDOWN`` incorrectly true
+            # and suppressing the very first alert.
+            if last is not None and now - last < _COOLDOWN:
                 continue
             self._last_alert[pair] = now
             candidates.append(CollisionCandidate(
