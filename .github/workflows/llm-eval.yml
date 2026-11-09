@@ -1,0 +1,60 @@
+name: LLM eval
+
+# Gated to main-branch merges only. Runs the live-LLM manager-agent scenarios
+# behind @pytest.mark.llm_eval. Costs real $ per run (~$2–5 for 3 scenarios),
+# so we don't run it on every PR.
+#
+# Manual trigger via workflow_dispatch is also allowed for ad-hoc validation
+# after a system-prompt change.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      extra_args:
+        description: Extra args to forward to pytest
+        required: false
+        default: ""
+
+concurrency:
+  group: llm-eval-${{ github.ref }}
+  cancel-in-progress: false  # don't cancel a paid run just because a new commit landed
+
+permissions:
+  contents: read
+
+jobs:
+  live-eval:
+    runs-on: ubuntu-latest
+    # Skip by default on push if the secret is not configured — the eval needs
+    # a real Anthropic key and failing silently is worse than skipping loudly.
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event_name == 'push' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Guard — ANTHROPIC_API_KEY must be set
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "::warning::ANTHROPIC_API_KEY secret is not configured — llm_eval scenarios will skip."
+            echo "To enable, add the secret under Repository Settings → Secrets → Actions."
+            exit 0
+          fi
+          echo "Secret present; proceeding."
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.14"
+          enable-cache: true
+
+      - name: Install workspace + dev deps
+        run: uv sync --all-packages --group dev
+
+      - name: Run live LLM scenarios
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          uv run pytest tests/evals/manager_agent/test_llm_eval.py \
+            -m llm_eval -v --tb=short ${{ github.event.inputs.extra_args }}

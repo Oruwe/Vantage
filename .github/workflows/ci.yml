@@ -6,10 +6,20 @@ on:
   pull_request:
     branches: [main]
 
-jobs:
-  test:
-    runs-on: ubuntu-latest
+concurrency:
+  # Cancel in-progress runs for the same ref — a new push supersedes the old one.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
+permissions:
+  contents: read
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────
+  # Lint — ruff. Fast; fails first if there's dead code or syntax drift.
+  # ─────────────────────────────────────────────────────────────────────────
+  lint:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -17,9 +27,90 @@ jobs:
         uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.14"
+          enable-cache: true
 
-      - name: Install dependencies
+      - name: Install dev deps
+        run: uv sync --group dev
+
+      - name: ruff check
+        run: uv run ruff check .
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Tests — full suite under xdist, deterministic eval scenarios included,
+  # live-LLM scenarios skipped by default.
+  #
+  # The conftest.py fast-path stubs Qdrant / Ollama probes, so we don't need
+  # to stand up either service in CI. Total runtime: ~12–20s.
+  # ─────────────────────────────────────────────────────────────────────────
+  test:
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.14"
+          enable-cache: true
+
+      - name: Install all workspace packages + dev deps
         run: uv sync --all-packages --group dev
 
-      - name: Run tests
-        run: uv run pytest tests/ -v --tb=short
+      # Materialize dev-reported scrubber false-positive overrides (if any)
+      # into a SQLite DB so tests/evals/scrubber/test_overrides.py runs them
+      # as additional precision regression cases. Absent file → silent skip.
+      - name: Promote scrubber overrides into VANTAGE_OVERRIDES_DB (optional)
+        id: overrides
+        run: |
+          OV_SRC="tests/evals/scrubber/overrides.jsonl"
+          if [ -f "$OV_SRC" ]; then
+            OV_DB="$RUNNER_TEMP/vantage_overrides.db"
+            uv run python - <<PY
+          import json, os, sqlite3, time
+          src = "$OV_SRC"
+          db = os.environ["OV_DB"]
+          conn = sqlite3.connect(db)
+          conn.executescript("""
+            CREATE TABLE IF NOT EXISTS scrubber_overrides (
+              pattern TEXT NOT NULL,
+              kind    TEXT NOT NULL,
+              overridden_at TEXT NOT NULL,
+              PRIMARY KEY (pattern, kind)
+            );
+          """)
+          now = time.strftime('%Y-%m-%dT%H:%M:%S')
+          n = 0
+          with open(src, encoding="utf-8") as f:
+              for line in f:
+                  line = line.strip()
+                  if not line: continue
+                  row = json.loads(line)
+                  note = row.get("note") or ""
+                  kind = ""
+                  # Derive kind from the note the CLI emits: "reported as false-positive for kind=<kind>"
+                  if "kind=" in note:
+                      kind = note.split("kind=", 1)[1].strip()
+                  if not kind:
+                      continue
+                  conn.execute(
+                      "INSERT OR REPLACE INTO scrubber_overrides (pattern, kind, overridden_at) VALUES (?, ?, ?)",
+                      (row["input"], kind, now),
+                  )
+                  n += 1
+          conn.commit()
+          conn.close()
+          print(f"loaded {n} override fixture(s) into {db}")
+          PY
+            echo "ov_db=$OV_DB" >> "$GITHUB_OUTPUT"
+            echo "Promoted $OV_SRC → $OV_DB"
+          else
+            echo "No overrides.jsonl present — skipping scrubber override regression."
+          fi
+        env:
+          OV_DB: ${{ runner.temp }}/vantage_overrides.db
+
+      - name: Run full pytest suite
+        env:
+          VANTAGE_OVERRIDES_DB: ${{ steps.overrides.outputs.ov_db }}
+        run: uv run pytest tests/ -q --tb=short
