@@ -11,6 +11,7 @@ from langgraph.graph import END, START, StateGraph
 
 from vantage.schemas import DraftPayload, RedactedContext, WeeklyDigest
 from ghost_daemon.config import Config
+from ghost_daemon.insights import EditDiffStore, render_system_suffix, select_examples
 from ghost_daemon.models.registry import LLMProvider
 from ghost_daemon.redaction.scrubber import scrub
 from ghost_daemon.storage.qdrant_store import QdrantStore
@@ -58,12 +59,14 @@ class DigestAgent:
         project_map: ProjectMap,
         tailer: SessionTailer,
         qdrant: QdrantStore | None = None,
+        edits: EditDiffStore | None = None,
     ) -> None:
         self._cfg = cfg
         self._llm = llm
         self._project_map = project_map
         self._tailer = tailer
         self._qdrant = qdrant
+        self._edits = edits
         self._graph = self._build()
 
     # ------------------------------------------------------------------
@@ -193,10 +196,13 @@ class DigestAgent:
             f"{history_block}"
         )
 
+        system_prompt = _SYSTEM_PROMPT + render_system_suffix(
+            select_examples(self._edits, artifact_type="weekly_digest"),
+        )
         try:
             output = await self._llm.complete(
                 messages=[
-                    {"role": "system", "content": _SYSTEM_PROMPT},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_msg},
                 ],
                 max_tokens=800,

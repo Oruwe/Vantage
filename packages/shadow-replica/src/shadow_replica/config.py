@@ -206,12 +206,12 @@ def add_trusted_dev(
 
 def add_watched_repo(slug: str, secret: str, path: Path | None = None) -> Path:
     """Register a GitHub repo to accept webhook deliveries from."""
-    from datetime import datetime
+    from datetime import datetime, timezone
     config_path = path or (_replica_config_dir() / "replica.toml")
     config_path.parent.mkdir(parents=True, exist_ok=True)
 
     cfg = load(config_path)
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
     for repo in cfg.watched_repos:
         if repo.slug == slug:
             repo.secret = secret

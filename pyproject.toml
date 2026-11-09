@@ -30,11 +30,15 @@ members = [
 [dependency-groups]
 dev = [
     "pytest>=8.0.0",
+    "pytest-xdist>=3.6.0",
     "ruff>=0.9.0",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Run the dev-loop suite in parallel across cores. Override with `-p no:xdist`
+# when a test genuinely needs serial execution.
+addopts = "-n auto --dist=loadfile"
 
 [tool.ruff]
 line-length = 100

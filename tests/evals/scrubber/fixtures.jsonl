@@ -1,0 +1,54 @@
+{"id": "aws-access-01", "input": "export AWS_ACCESS_KEY=AKIAIOSFODNN7EXAMPLE", "expected_kinds": ["aws_access_key"], "forbid_substrings": ["AKIAIOSFODNN7EXAMPLE"]}
+{"id": "aws-access-02", "input": "boto3.client('s3', aws_access_key_id='AKIA1234567890ABCDEF')", "expected_kinds": ["aws_access_key"], "forbid_substrings": ["AKIA1234567890ABCDEF"]}
+{"id": "aws-access-03", "input": "Leaked credential found: AKIAZZZZZZZZZZZZZZZZ in log file", "expected_kinds": ["aws_access_key"], "forbid_substrings": ["AKIAZZZZZZZZZZZZZZZZ"]}
+{"id": "aws-secret-01", "input": "AWS secret = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", "expected_kinds": ["aws_secret_key"], "forbid_substrings": ["wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"]}
+{"id": "aws-secret-02", "input": "aws_secret_key=abcdefghijklmnopqrstuvwxyz0123456789ABCD", "expected_kinds": ["aws_secret_key"], "forbid_substrings": ["abcdefghijklmnopqrstuvwxyz0123456789ABCD"]}
+{"id": "github-pat-01", "input": "git clone https://user:ghp_1234567890abcdefghijklmnopqrstuvwxyzAB@github.com/foo/bar.git", "expected_kinds": ["github_token"], "forbid_substrings": ["ghp_1234567890abcdefghijklmnopqrstuvwxyzAB"]}
+{"id": "github-pat-02", "input": "GITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz0123456789ABCDEF", "expected_kinds": ["github_token"], "forbid_substrings": ["ghp_abcdefghijklmnopqrstuvwxyz0123456789ABCDEF"]}
+{"id": "github-server-01", "input": "Authorization: token ghs_abcdefghijklmnopqrstuvwxyz0123456789", "expected_kinds": ["github_token"], "forbid_substrings": ["ghs_abcdefghijklmnopqrstuvwxyz0123456789"]}
+{"id": "github-oauth-01", "input": "token gho_abcdefghijklmnopqrstuvwxyz0123456789ABC", "expected_kinds": ["github_token"], "forbid_substrings": ["gho_abcdefghijklmnopqrstuvwxyz0123456789ABC"]}
+{"id": "github-user-01", "input": "env.GITHUB_USER_TOKEN = 'ghu_zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz'", "expected_kinds": ["github_token"], "forbid_substrings": ["ghu_zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"]}
+{"id": "gitlab-pat-01", "input": "GL_TOKEN=glpat-abcdefghijklmnopqrst", "expected_kinds": ["gitlab_token"], "forbid_substrings": ["glpat-abcdefghijklmnopqrst"]}
+{"id": "gitlab-pat-02", "input": "deploy via glpat-XYZZ_1234567890-aBcDeF", "expected_kinds": ["gitlab_token"], "forbid_substrings": ["glpat-XYZZ_1234567890-aBcDeF"]}
+{"id": "slack-bot-01", "input": "slack_bot = xoxb-FIXTUREFIXTUREFIXTUREFIXTURE", "expected_kinds": ["slack_token"], "forbid_substrings": ["xoxb-FIXTUREFIXTUREFIXTUREFIXTURE"]}
+{"id": "slack-app-01", "input": "slack webhook uses xoxp-FIXTUREFIXTUREFIXTUREFIXTURE", "expected_kinds": ["slack_token"], "forbid_substrings": ["xoxp-FIXTUREFIXTUREFIXTUREFIXTURE"]}
+{"id": "anthropic-01", "input": "ANTHROPIC_API_KEY=sk-ant-api03-abcdefghijklmnopqrstuvwxyz", "expected_kinds": ["anthropic_key"], "forbid_substrings": ["sk-ant-api03-abcdefghijklmnopqrstuvwxyz"]}
+{"id": "anthropic-02", "input": "client = Anthropic(api_key='sk-ant-admin01-ZZZZZZZZZZZZZZZZZZZZ')", "expected_kinds": ["anthropic_key"], "forbid_substrings": ["sk-ant-admin01-ZZZZZZZZZZZZZZZZZZZZ"]}
+{"id": "openai-01", "input": "OPENAI_API_KEY=sk-abcdefghijklmnopqrstuvwxyz012345", "expected_kinds": ["openai_key"], "forbid_substrings": ["sk-abcdefghijklmnopqrstuvwxyz012345"]}
+{"id": "openai-02", "input": "import openai; openai.api_key = 'sk-1234567890ABCDEFGHIJ1234567890ABCDEF'", "expected_kinds": ["openai_key"], "forbid_substrings": ["sk-1234567890ABCDEFGHIJ1234567890ABCDEF"]}
+{"id": "stripe-01", "input": "STRIPE_KEY=sk_live_FIXTUREFIXTUREFIXTUREXX", "expected_kinds": ["stripe_live"], "forbid_substrings": ["sk_live_FIXTUREFIXTUREFIXTUREXX"]}
+{"id": "stripe-02", "input": "rk_live_FIXTUREFIXTUREFIXTUREXX was in prod", "expected_kinds": ["stripe_live"], "forbid_substrings": ["rk_live_FIXTUREFIXTUREFIXTUREXX"]}
+{"id": "gcp-01", "input": "GCP_KEY=AIzaSyA1234567890_abcdefghijklmnopqrstu", "expected_kinds": ["gcp_api_key"], "forbid_substrings": ["AIzaSyA1234567890_abcdefghijklmnopqrstu"]}
+{"id": "gcp-02", "input": "key = AIzaBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", "expected_kinds": ["gcp_api_key"], "forbid_substrings": ["AIzaBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"]}
+{"id": "azure-01", "input": "DefaultEndpointsProtocol=https;AccountName=foo;AccountKey=abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMN==;EndpointSuffix=core", "expected_kinds": ["azure_acct_key"], "forbid_substrings": ["AccountKey=abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMN=="]}
+{"id": "azure-02", "input": "conn: AccountKey=XYZXYZXYZXYZXYZXYZXYZXYZXYZXYZXYZXYZXYZXYZX1", "expected_kinds": ["azure_acct_key"], "forbid_substrings": ["AccountKey=XYZXYZXYZXYZXYZXYZXYZXYZXYZXYZXYZXYZXYZXYZX1"]}
+{"id": "jwt-01", "input": "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMifQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c", "expected_kinds": ["jwt"], "forbid_substrings": ["eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMifQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"]}
+{"id": "jwt-02", "input": "my id_token is eyJraWQiOiJrMSJ9.eyJpc3MiOiJhY21lIn0.abcdefghijklmnop today", "expected_kinds": ["jwt"], "forbid_substrings": ["eyJraWQiOiJrMSJ9.eyJpc3MiOiJhY21lIn0.abcdefghijklmnop"]}
+{"id": "basic-auth-01", "input": "curl https://admin:hunter2secret@example.com/api", "expected_kinds": ["basic_auth_url"], "forbid_substrings": ["admin:hunter2secret@example.com"]}
+{"id": "basic-auth-02", "input": "DATABASE_URL=https://dbuser:longpassphrase@db.internal/prod", "expected_kinds": ["basic_auth_url"], "forbid_substrings": ["dbuser:longpassphrase@db.internal"]}
+{"id": "bearer-01", "input": "Bearer eyFakeJWTbutLongEnoughTOcoUNT.ThisshouldalsobeRedacted==", "expected_kinds": ["bearer_token"], "forbid_substrings": ["eyFakeJWTbutLongEnoughTOcoUNT.ThisshouldalsobeRedacted=="]}
+{"id": "bearer-02", "input": "fetch(url, {headers: {Authorization: 'bearer abcd1234efgh5678ijkl=='}})", "expected_kinds": ["bearer_token"], "forbid_substrings": ["abcd1234efgh5678ijkl=="]}
+{"id": "dotenv-01", "input": "DATABASE_PASSWORD=super-secret-value-12345", "expected_kinds": ["dotenv_secret"], "forbid_substrings": ["super-secret-value-12345"]}
+{"id": "dotenv-02", "input": "REDIS_URL=redis://password123@redis.internal:6379", "expected_kinds": ["dotenv_secret"], "forbid_substrings": ["redis://password123@redis.internal:6379"]}
+{"id": "dotenv-03", "input": "SECRET_TOKEN=xoHSJfbw_EvgJxNnqRcBqA.9fG.tokenlike", "expected_kinds": ["dotenv_secret"], "forbid_substrings": ["xoHSJfbw_EvgJxNnqRcBqA.9fG.tokenlike"]}
+{"id": "private-key-rsa", "input": "I pasted my key:\n-----BEGIN RSA PRIVATE KEY-----\nMIIEogIBAAKCAQEAu1SU1LfVLPHCozMxH2Mo4lgOEePzNm0tRgeLezV6ffAt0gun\nZVTcdHk8+xDC69wIE0GqPq8ZzvB5tVZnQ==\n-----END RSA PRIVATE KEY-----\nplease rotate.", "expected_kinds": ["private_key"], "forbid_substrings": ["MIIEogIBAAKCAQEAu1SU1LfVLPHCozMxH2Mo4lgOEePzNm0tRgeLezV6ffAt0gun"]}
+{"id": "private-key-openssh", "input": "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZQ\n-----END OPENSSH PRIVATE KEY-----", "expected_kinds": ["private_key"], "forbid_substrings": ["b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQ"]}
+{"id": "highentropy-01", "input": "deployment id: XqJLP8vHk2mNcRfT1aYbZw9UoE3djPsNXqZaBcDeFg", "expected_kinds": ["high_entropy"], "forbid_substrings": ["XqJLP8vHk2mNcRfT1aYbZw9UoE3djPsNXqZaBcDeFg"]}
+{"id": "highentropy-02", "input": "The request signature was mN7xQp2vYlZaB0cDe1Fg3Hi4Jk5Lm6No7Pq8RsTu9Vw", "expected_kinds": ["high_entropy"], "forbid_substrings": ["mN7xQp2vYlZaB0cDe1Fg3Hi4Jk5Lm6No7Pq8RsTu9Vw"]}
+{"id": "clean-plain-text", "input": "Alice fixed the auth timeout bug today.", "expected_kinds": [], "require_substrings": ["Alice fixed the auth timeout bug today."]}
+{"id": "clean-password-label", "input": "my password: password123 is weak", "expected_kinds": [], "require_substrings": ["my password: password123 is weak"]}
+{"id": "clean-shortname", "input": "username: alice-dev", "expected_kinds": [], "require_substrings": ["alice-dev"]}
+{"id": "clean-url-no-auth", "input": "see https://docs.example.com/api/getting-started for details", "expected_kinds": [], "require_substrings": ["docs.example.com/api/getting-started"]}
+{"id": "clean-ip", "input": "upstream server is 10.0.1.42 behind the proxy", "expected_kinds": [], "require_substrings": ["10.0.1.42"]}
+{"id": "clean-uuid", "input": "trace id 550e8400-e29b-41d4-a716-446655440000 shows latency", "expected_kinds": [], "require_substrings": ["550e8400-e29b-41d4-a716-446655440000"]}
+{"id": "clean-git-sha", "input": "revert commit 4a7b9c1e2d8f5a3b6c0d9e2f1a8b7c4d5e6f7a8b", "expected_kinds": [], "require_substrings": ["4a7b9c1e2d8f5a3b6c0d9e2f1a8b7c4d5e6f7a8b"]}
+{"id": "clean-md5-hash", "input": "file checksum: d41d8cd98f00b204e9800998ecf8427e", "expected_kinds": [], "require_substrings": ["d41d8cd98f00b204e9800998ecf8427e"]}
+{"id": "clean-base64-short", "input": "icon = 'data:image/svg+xml;base64,PHN2Zz48L3N2Zz4='", "expected_kinds": [], "require_substrings": ["PHN2Zz48L3N2Zz4="]}
+{"id": "clean-var-name", "input": "const AUTHORIZATION_HEADER_KEY = 'authorization'", "expected_kinds": [], "require_substrings": ["AUTHORIZATION_HEADER_KEY"]}
+{"id": "clean-prose-with-numbers", "input": "ran 2500 tests in 1234 seconds, 98 percent passed", "expected_kinds": [], "require_substrings": ["ran 2500 tests in 1234 seconds, 98 percent passed"]}
+{"id": "clean-path", "input": "file written to /var/log/vantage/ghost-daemon.log on disk", "expected_kinds": [], "require_substrings": ["/var/log/vantage/ghost-daemon.log"]}
+{"id": "clean-near-miss-aws", "input": "this is NOT a key: AKIA12345 (too short to match the pattern)", "expected_kinds": [], "require_substrings": ["AKIA12345"]}
+{"id": "clean-near-miss-github", "input": "ghp_only15chars_x should not match (too short)", "expected_kinds": [], "require_substrings": ["ghp_only15chars_x"]}
+{"id": "clean-password-weak", "input": "example password for docs: Hunter2 — clearly a demo value", "expected_kinds": [], "require_substrings": ["Hunter2"]}
+{"id": "clean-url-with-port", "input": "API responds at http://localhost:8080/v1/receive", "expected_kinds": [], "require_substrings": ["http://localhost:8080/v1/receive"]}
+{"id": "clean-env-no-value", "input": "export AWS_ACCESS_KEY=   # intentionally empty for CI", "expected_kinds": [], "require_substrings": ["AWS_ACCESS_KEY="]}

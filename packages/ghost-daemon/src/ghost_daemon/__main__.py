@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import sys
 import webbrowser
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Annotated
 
@@ -25,7 +25,7 @@ def _load() -> "tuple[object, object]":
 
 def _parse_since(since: str) -> datetime:
     since = since.strip().lower()
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     mapping = {
         "today": now.replace(hour=0, minute=0, second=0, microsecond=0),
         "yesterday": (now - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0),
@@ -204,7 +204,7 @@ def _age_label(iso_ts: str | None) -> str:
         return "unknown"
     try:
         dt = datetime.fromisoformat(iso_ts)
-        secs = int((datetime.utcnow() - dt).total_seconds())
+        secs = int((datetime.now(timezone.utc).replace(tzinfo=None) - dt).total_seconds())
         if secs < 0:
             secs = 0
         if secs < 60:
@@ -251,11 +251,11 @@ def digest(
     daemon = GhostDaemon(cfg)
 
     period_start = _parse_since(since)
-    period_end = datetime.utcnow() if until == "now" else datetime.fromisoformat(until)
+    period_end = datetime.now(timezone.utc).replace(tzinfo=None) if until == "now" else datetime.fromisoformat(until)
 
     typer.echo(f"Generating digest for {period_start.date()} → {period_end.date()} …")
 
-    agent = DigestAgent(cfg, daemon.llm, daemon.project_map, daemon.tailer, qdrant=daemon.qdrant)
+    agent = DigestAgent(cfg, daemon.llm, daemon.project_map, daemon.tailer, qdrant=daemon.qdrant, edits=daemon.edits)
 
     async def _run():
         draft = await agent.run(period_start, period_end, repo_filter=repo or None)
@@ -509,6 +509,48 @@ def pair_command(
 
 subscribers_app = typer.Typer(help="Manage subscribers — who receives your approved artifacts.")
 app.add_typer(subscribers_app, name="subscribers")
+
+
+scrubber_app = typer.Typer(help="Inspect and export scrubber insights (local only).")
+app.add_typer(scrubber_app, name="scrubber")
+
+
+@scrubber_app.command("export-overrides")
+def scrubber_export_overrides(
+    out: Annotated[str, typer.Option("--out", "-o", help="Write JSONL to this path (default: stdout)")] = "",
+) -> None:
+    """Emit recorded false-positive overrides as JSONL precision fixtures.
+
+    Each line is a precision case the scrubber eval can run against:
+      {"id": "override-<n>", "input": "<pattern>", "expected_kinds": [], ...}
+
+    No network, no telemetry — reads from your local vantage.db.
+    """
+    import json as _json
+    from ghost_daemon import config as _cfg_mod
+    from ghost_daemon.insights.scrubber_hits import ScrubberHitStore
+
+    cfg = _cfg_mod.load()
+    hits = ScrubberHitStore(cfg.sqlite_path)
+    overrides = hits.recent_overrides(limit=10000)
+
+    lines: list[str] = []
+    for i, (pattern, kind, _at) in enumerate(overrides):
+        fixture = {
+            "id": f"override-{i}",
+            "input": pattern,
+            "expected_kinds": [],
+            "require_substrings": [pattern[:60]],
+            "note": f"reported as false-positive for kind={kind}",
+        }
+        lines.append(_json.dumps(fixture, separators=(",", ":"), sort_keys=True))
+
+    body = "\n".join(lines) + ("\n" if lines else "")
+    if out:
+        Path(out).write_text(body, encoding="utf-8")
+        typer.echo(f"Wrote {len(lines)} override fixture(s) to {out}")
+    else:
+        typer.echo(body if lines else "(no overrides recorded yet)")
 
 
 @subscribers_app.command("pair")
@@ -798,7 +840,7 @@ def commit_report(
     daemon = GhostDaemon(cfg)
 
     repo_path = Path(repo).resolve() if repo else Path(os.getcwd())
-    agent = CommitAgent(cfg, daemon.llm, daemon.tailer, qdrant=daemon.qdrant)
+    agent = CommitAgent(cfg, daemon.llm, daemon.tailer, qdrant=daemon.qdrant, edits=daemon.edits)
 
     async def _run():
         draft = await agent.run(repo_path, commit_sha=sha or None)
@@ -861,7 +903,7 @@ def standup(
     daemon = GhostDaemon(cfg)
 
     since_dt = _parse_since(since)
-    agent = StandupAgent(cfg, daemon.llm, daemon.project_map, daemon.tailer)
+    agent = StandupAgent(cfg, daemon.llm, daemon.project_map, daemon.tailer, edits=daemon.edits)
 
     async def _run():
         draft = await agent.run(since=since_dt)
@@ -1635,8 +1677,8 @@ repo = ""
 
         daemon = GhostDaemon(cfg)
         period_start = _parse_since("monday")
-        period_end = datetime.utcnow()
-        agent = DigestAgent(cfg, daemon.llm, daemon.project_map, daemon.tailer, qdrant=daemon.qdrant)
+        period_end = datetime.now(timezone.utc).replace(tzinfo=None)
+        agent = DigestAgent(cfg, daemon.llm, daemon.project_map, daemon.tailer, qdrant=daemon.qdrant, edits=daemon.edits)
 
         async def _run():
             draft = await agent.run(period_start, period_end)

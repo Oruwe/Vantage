@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from vantage.schemas import PolicyDecision, ProbeResponse, RedactionLevel
@@ -32,8 +32,8 @@ def generate_fallback(
             if cached is not None:
                 signals, captured_at = cached
                 try:
-                    # Both sides use naive UTC (datetime.utcnow())
-                    staleness = int((datetime.utcnow() - captured_at.replace(tzinfo=None)).total_seconds())
+                    # Both sides use naive UTC (datetime.now(timezone.utc).replace(tzinfo=None))
+                    staleness = int((datetime.now(timezone.utc).replace(tzinfo=None) - captured_at.replace(tzinfo=None)).total_seconds())
                     staleness = max(0, staleness)
                 except Exception:
                     staleness = 0
@@ -59,7 +59,7 @@ def generate_fallback(
     row = recent[0]
     try:
         received_dt = datetime.fromisoformat(row.received_at)
-        staleness = int((datetime.utcnow() - received_dt).total_seconds())
+        staleness = int((datetime.now(timezone.utc).replace(tzinfo=None) - received_dt).total_seconds())
     except Exception:
         staleness = 0
 

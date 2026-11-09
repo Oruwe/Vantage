@@ -424,6 +424,278 @@ def test_cli_reset_clears_conversation_id(cli_runner: CliRunner, tmp_cfg_path: P
     assert cfgmod.load(tmp_cfg_path).conversation_id == ""
 
 
+# ── Approval flow (dangerous-tool resume) ───────────────────────────────────
+
+
+def test_chat_approve_stream_posts_tool_use_id_and_approved() -> None:
+    from employer_voice.replica_client import ReplicaClient
+
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["url"] = str(request.url)
+        captured["headers"] = dict(request.headers)
+        captured["body"] = json.loads(request.content.decode("utf-8"))
+        body = (
+            'event: tool_result\ndata: {"id":"tid-1","tool":"probe_live","approved":true,"preview":"ok"}\n\n'
+            'event: message_delta\ndata: {"content":"Alice is active."}\n\n'
+            'event: done\ndata: {"conversation_id":"conv-a","loops":2,"pending_approval":false}\n\n'
+        )
+        return httpx.Response(200, text=body, headers={"content-type": "text/event-stream"})
+
+    async def _go():
+        async with _mock_transport(handler) as c:
+            cli = ReplicaClient("http://localhost:7475", "vsm_t")
+            events = [ev async for ev in cli.chat_approve_stream("tid-1", True, client=c)]
+            return events
+
+    events = asyncio.run(_go())
+    names = [e["event"] for e in events]
+    assert names == ["tool_result", "message_delta", "done"]
+    assert captured["url"].endswith("/ui/api/chat/approve")
+    assert captured["body"] == {"tool_use_id": "tid-1", "approved": True}
+    assert captured["headers"]["authorization"] == "Bearer vsm_t"
+
+
+def test_chat_approve_stream_carries_denied_flag() -> None:
+    from employer_voice.replica_client import ReplicaClient
+
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content.decode("utf-8"))
+        return httpx.Response(200, text="event: done\ndata: {\"loops\":1}\n\n",
+                              headers={"content-type": "text/event-stream"})
+
+    async def _go():
+        async with _mock_transport(handler) as c:
+            cli = ReplicaClient("http://localhost:7475", "vsm_t")
+            async for _ in cli.chat_approve_stream("tid-x", False, client=c):
+                pass
+
+    asyncio.run(_go())
+    assert captured["body"] == {"tool_use_id": "tid-x", "approved": False}
+
+
+def test_get_pending_approval_returns_tool_details() -> None:
+    from employer_voice.replica_client import ReplicaClient
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/ui/api/chat/pending/tid-9")
+        return httpx.Response(200, json={
+            "tool_use_id": "tid-9",
+            "tool_name": "ask_dev",
+            "tool_input": {"developer_id": "alice", "question": "status?"},
+        })
+
+    async def _go():
+        async with _mock_transport(handler) as c:
+            cli = ReplicaClient("http://localhost:7475", "vsm_t")
+            return await cli.get_pending_approval("tid-9", client=c)
+
+    data = asyncio.run(_go())
+    assert data["tool_name"] == "ask_dev"
+    assert data["tool_input"]["developer_id"] == "alice"
+
+
+def test_ask_stream_captures_pending_tool_metadata(tmp_cfg_path: Path) -> None:
+    """If the agent pauses on a dangerous tool, the summary must expose
+    both the tool_use_id AND the tool name + args so the caller can prompt."""
+    from employer_voice import config as cfgmod
+    from employer_voice import session as sess
+
+    cfgmod.save(cfgmod.VoiceConfig(
+        replica=cfgmod.ReplicaTarget(url="http://x", manager_token="vsm_t"),
+    ), tmp_cfg_path)
+
+    async def _fake_stream(self, message, conversation_id=None, *, client=None):
+        for ev in [
+            {"event": "started", "conversation_id": "conv-p"},
+            {"event": "tool_call", "id": "tid-7", "tool": "probe_live",
+             "args": {"developer_id": "alice"}, "requires_confirmation": True},
+            {"event": "done", "conversation_id": "conv-p", "loops": 1,
+             "stop_reason": "awaiting_approval", "pending_approval": True,
+             "pending_tool_use_id": "tid-7"},
+        ]:
+            yield ev
+
+    with patch("employer_voice.replica_client.ReplicaClient.chat_stream", _fake_stream):
+        summary = asyncio.run(sess.ask_stream("probe alice", config_path=tmp_cfg_path))
+
+    assert summary.pending_approval is True
+    assert summary.pending_tool_use_id == "tid-7"
+    assert summary.pending_tool_name == "probe_live"
+    assert summary.pending_tool_args == {"developer_id": "alice"}
+
+
+def test_resume_approval_persists_convo_and_returns_summary(tmp_cfg_path: Path) -> None:
+    from employer_voice import config as cfgmod
+    from employer_voice import session as sess
+
+    cfgmod.save(cfgmod.VoiceConfig(
+        replica=cfgmod.ReplicaTarget(url="http://x", manager_token="vsm_t"),
+    ), tmp_cfg_path)
+
+    async def _fake_approve(self, tool_use_id, approved, *, client=None):
+        assert tool_use_id == "tid-7"
+        assert approved is True
+        for ev in [
+            {"event": "tool_result", "id": "tid-7", "tool": "probe_live",
+             "approved": True, "preview": "ok", "latency_ms": 42},
+            {"event": "message_delta", "content": "Alice is heads-down on auth."},
+            {"event": "done", "conversation_id": "conv-r", "loops": 2,
+             "stop_reason": "end_turn", "pending_approval": False},
+        ]:
+            yield ev
+
+    events_seen: list[dict] = []
+    with patch("employer_voice.replica_client.ReplicaClient.chat_approve_stream", _fake_approve):
+        summary = asyncio.run(sess.resume_approval(
+            "tid-7", True, config_path=tmp_cfg_path, on_event=events_seen.append,
+        ))
+    assert summary.assistant_text == "Alice is heads-down on auth."
+    assert summary.conversation_id == "conv-r"
+    assert summary.pending_approval is False
+    assert cfgmod.load(tmp_cfg_path).conversation_id == "conv-r"
+    assert [e["event"] for e in events_seen] == ["tool_result", "message_delta", "done"]
+
+
+def test_cli_ask_stream_auto_approve_resumes_without_prompting(
+    cli_runner: CliRunner, tmp_cfg_path: Path,
+) -> None:
+    """--auto-approve should silently confirm and chain into resume_approval."""
+    from employer_voice.cli import app
+
+    cli_runner.invoke(app, ["init", "-t", "vsm_t", "--config", str(tmp_cfg_path)])
+
+    async def _fake_stream(self, message, conversation_id=None, *, client=None):
+        for ev in [
+            {"event": "started", "conversation_id": "conv-a"},
+            {"event": "tool_call", "id": "tid-a", "tool": "probe_live",
+             "args": {"developer_id": "alice"}, "requires_confirmation": True},
+            {"event": "done", "conversation_id": "conv-a", "loops": 1,
+             "pending_approval": True, "pending_tool_use_id": "tid-a"},
+        ]:
+            yield ev
+
+    approve_calls: list[tuple] = []
+
+    async def _fake_approve(self, tool_use_id, approved, *, client=None):
+        approve_calls.append((tool_use_id, approved))
+        for ev in [
+            {"event": "message_delta", "content": "Done."},
+            {"event": "done", "conversation_id": "conv-a", "loops": 2, "pending_approval": False},
+        ]:
+            yield ev
+
+    with patch("employer_voice.replica_client.ReplicaClient.chat_stream", _fake_stream), \
+         patch("employer_voice.replica_client.ReplicaClient.chat_approve_stream", _fake_approve):
+        result = cli_runner.invoke(app, [
+            "ask", "probe alice", "--stream", "--auto-approve",
+            "--config", str(tmp_cfg_path),
+        ])
+
+    assert result.exit_code == 0, result.output
+    assert approve_calls == [("tid-a", True)]
+    assert "approved" in result.output.lower()
+    assert "Done." in result.output
+
+
+def test_cli_ask_stream_deny_all_denies_without_prompting(
+    cli_runner: CliRunner, tmp_cfg_path: Path,
+) -> None:
+    from employer_voice.cli import app
+
+    cli_runner.invoke(app, ["init", "-t", "vsm_t", "--config", str(tmp_cfg_path)])
+
+    async def _fake_stream(self, message, conversation_id=None, *, client=None):
+        for ev in [
+            {"event": "started", "conversation_id": "conv-d"},
+            {"event": "tool_call", "id": "tid-d", "tool": "ask_dev",
+             "args": {"developer_id": "bob", "question": "hi"},
+             "requires_confirmation": True},
+            {"event": "done", "conversation_id": "conv-d", "loops": 1,
+             "pending_approval": True, "pending_tool_use_id": "tid-d"},
+        ]:
+            yield ev
+
+    approve_calls: list[tuple] = []
+
+    async def _fake_approve(self, tool_use_id, approved, *, client=None):
+        approve_calls.append((tool_use_id, approved))
+        for ev in [
+            {"event": "message_delta", "content": "OK, skipped."},
+            {"event": "done", "conversation_id": "conv-d", "loops": 2, "pending_approval": False},
+        ]:
+            yield ev
+
+    with patch("employer_voice.replica_client.ReplicaClient.chat_stream", _fake_stream), \
+         patch("employer_voice.replica_client.ReplicaClient.chat_approve_stream", _fake_approve):
+        result = cli_runner.invoke(app, [
+            "ask", "ping bob", "--stream", "--deny-all",
+            "--config", str(tmp_cfg_path),
+        ])
+
+    assert result.exit_code == 0, result.output
+    assert approve_calls == [("tid-d", False)]
+    assert "denied" in result.output.lower()
+    assert "OK, skipped." in result.output
+
+
+def test_cli_ask_stream_interactive_prompt_yes(
+    cli_runner: CliRunner, tmp_cfg_path: Path,
+) -> None:
+    """Without the policy flags the CLI must prompt and respect y/n input."""
+    from employer_voice.cli import app
+
+    cli_runner.invoke(app, ["init", "-t", "vsm_t", "--config", str(tmp_cfg_path)])
+
+    async def _fake_stream(self, message, conversation_id=None, *, client=None):
+        for ev in [
+            {"event": "started", "conversation_id": "conv-i"},
+            {"event": "tool_call", "id": "tid-i", "tool": "probe_live",
+             "args": {"developer_id": "alice"}, "requires_confirmation": True},
+            {"event": "done", "conversation_id": "conv-i", "loops": 1,
+             "pending_approval": True, "pending_tool_use_id": "tid-i"},
+        ]:
+            yield ev
+
+    approve_calls: list[tuple] = []
+
+    async def _fake_approve(self, tool_use_id, approved, *, client=None):
+        approve_calls.append((tool_use_id, approved))
+        for ev in [
+            {"event": "message_delta", "content": "probed."},
+            {"event": "done", "conversation_id": "conv-i", "loops": 2, "pending_approval": False},
+        ]:
+            yield ev
+
+    with patch("employer_voice.replica_client.ReplicaClient.chat_stream", _fake_stream), \
+         patch("employer_voice.replica_client.ReplicaClient.chat_approve_stream", _fake_approve):
+        result = cli_runner.invoke(
+            app,
+            ["ask", "probe", "--stream", "--config", str(tmp_cfg_path)],
+            input="y\n",
+        )
+    assert result.exit_code == 0, result.output
+    assert approve_calls == [("tid-i", True)]
+    assert "probe_live" in result.output
+
+
+def test_cli_ask_stream_rejects_both_policy_flags(
+    cli_runner: CliRunner, tmp_cfg_path: Path,
+) -> None:
+    from employer_voice.cli import app
+
+    cli_runner.invoke(app, ["init", "-t", "vsm_t", "--config", str(tmp_cfg_path)])
+    result = cli_runner.invoke(app, [
+        "ask", "hi", "--stream", "--auto-approve", "--deny-all",
+        "--config", str(tmp_cfg_path),
+    ])
+    assert result.exit_code == 1
+    assert "mutually exclusive" in result.output
+
+
 # ── Smoke: package has no voice/talk surface ────────────────────────────────
 
 

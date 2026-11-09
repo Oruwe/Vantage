@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import subprocess
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, TypedDict
 
@@ -11,6 +11,7 @@ from langgraph.graph import END, START, StateGraph
 
 from vantage.schemas import DraftPayload, RedactedContext, StandupBullets
 from ghost_daemon.config import Config
+from ghost_daemon.insights import EditDiffStore, render_system_suffix, select_examples
 from ghost_daemon.models.registry import LLMProvider
 from ghost_daemon.redaction.scrubber import scrub
 from ghost_daemon.watchers.project_map import ProjectMap
@@ -52,15 +53,17 @@ class StandupAgent:
         llm: LLMProvider,
         project_map: ProjectMap,
         tailer: SessionTailer,
+        edits: EditDiffStore | None = None,
     ) -> None:
         self._cfg = cfg
         self._llm = llm
         self._project_map = project_map
         self._tailer = tailer
+        self._edits = edits
         self._graph = self._build()
 
     async def run(self, since: datetime | None = None) -> DraftPayload[StandupBullets]:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         yesterday_start = since or (now - timedelta(days=1)).replace(
             hour=0, minute=0, second=0, microsecond=0
         )
@@ -137,10 +140,13 @@ class StandupAgent:
             f"Period: {state['yesterday_start'].date()} to {state['yesterday_end'].date()}\n\n"
             f"Context (redacted):\n{ctx.scrubbed_text[:4000]}"
         )
+        system_prompt = _SYSTEM_PROMPT + render_system_suffix(
+            select_examples(self._edits, artifact_type="standup"),
+        )
         try:
             output = await self._llm.complete(
                 messages=[
-                    {"role": "system", "content": _SYSTEM_PROMPT},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_msg},
                 ],
                 max_tokens=400,

@@ -21,6 +21,7 @@ from shadow_replica.collision.detector import CollisionDetector
 from shadow_replica.config import ReplicaConfig
 from shadow_replica.connections.ws_hub import WSHub
 from shadow_replica.models.embedder import Embedder
+from shadow_replica.observability import RequestIdLogFilter, RequestIdMiddleware
 from shadow_replica.storage.received_store import ReceivedStore
 from shadow_replica.wiretap.bus import WiretapBus
 
@@ -109,6 +110,14 @@ def build_app(cfg: ReplicaConfig) -> FastAPI:
     manager_agent = build_manager_agent(tool_ctx, chat_memory, cfg, bus=bus)
 
     app = FastAPI(title="Vantage Shadow Replica", docs_url="/docs", redoc_url=None)
+    app.add_middleware(RequestIdMiddleware)
+
+    # Make every log record carry the current request-id so operators can
+    # correlate a push → receive → notify → agent-tool-call chain. Installed
+    # on the root logger so handlers set up by uvicorn/pytest see it too.
+    _root = logging.getLogger()
+    if not any(isinstance(f, RequestIdLogFilter) for f in _root.filters):
+        _root.addFilter(RequestIdLogFilter())
 
     app.include_router(make_receive_router(store, cfg.trusted_devs, bus=bus, notifications=cfg.notifications))
     app.include_router(make_timeline_router(store, cfg.trusted_devs))
@@ -130,6 +139,40 @@ def build_app(cfg: ReplicaConfig) -> FastAPI:
     async def metrics():
         from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
         return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+    @app.get("/v1/collisions/for-me")
+    async def collisions_for_me(request: Request, hours: int = 48, limit: int = 20):
+        """Dev-facing collision heads-up.
+
+        Returns the subset of recent semantic/file collisions that involve
+        the developer identified by the bearer token. The ghost UI polls
+        this to show a pre-push "someone else is near this file" warning.
+
+        Auth: Bearer token = the same subscriber token the dev uses to push.
+        No body signature required (GET).
+        """
+        matched = verify_request(request, b"", cfg.trusted_devs)
+        hours = max(1, min(int(hours), 24 * 14))
+        limit = max(1, min(int(limit), 50))
+
+        from shadow_replica.collision.semantic import SemanticCollisionDetector
+        detector = SemanticCollisionDetector(store)
+        dev_name_map = {d.developer_id: d.name for d in cfg.trusted_devs}
+        all_items = await detector.scan_recent(
+            hours=hours,
+            max_collisions=100,
+            dev_name_map=dev_name_map,
+        )
+        mine = [
+            c for c in all_items
+            if c.developer_a == matched.developer_id or c.developer_b == matched.developer_id
+        ][:limit]
+        return JSONResponse({
+            "developer_id": matched.developer_id,
+            "hours": hours,
+            "count": len(mine),
+            "collisions": [c.model_dump(mode="json") for c in mine],
+        })
 
     @app.post("/v1/agent/query")
     async def agent_query(request: Request):

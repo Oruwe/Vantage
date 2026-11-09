@@ -7,6 +7,8 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
+from vantage.schemas import _utcnow
+
 
 class A2AIntent(str, Enum):
     """Structured intents for Agent-to-Agent dialogue.
@@ -60,7 +62,7 @@ class A2AEnvelope(BaseModel):
     intent: A2AIntent
     from_agent: A2AAgentRef
     to_agent: A2AAgentRef
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
     latency_ms: int | None = None                         # fill on response envelopes
     status: str = "ok"                                    # "ok" | "denied" | "timeout" | "error"
     summary: str = ""                                     # one-line human preview
@@ -73,5 +75,5 @@ class A2ASessionMeta(BaseModel):
     topic: str = ""
     initiator: A2AAgentRef
     participants: list[A2AAgentRef] = Field(default_factory=list)
-    started_at: datetime = Field(default_factory=datetime.utcnow)
+    started_at: datetime = Field(default_factory=_utcnow)
     closed_at: datetime | None = None

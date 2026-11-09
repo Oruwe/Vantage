@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from vantage.schemas import (
     ApprovalSource, ApprovedPayload, BugResolution, CommitReport, DraftPayload,
     PRDraft, QuickNote, StandupBullets, WeeklyDigest,
 )
+from ghost_daemon.insights.edit_store import EditDiffStore, compute_diff
 from ghost_daemon.storage.sqlite_store import SQLiteStore
 
 logger = logging.getLogger(__name__)
@@ -21,15 +22,21 @@ class ApprovalGate:
     ApprovedPayload may only be constructed here — not by callers directly.
     """
 
-    def __init__(self, store: SQLiteStore, developer_id: str) -> None:
+    def __init__(
+        self,
+        store: SQLiteStore,
+        developer_id: str,
+        edits: EditDiffStore | None = None,
+    ) -> None:
         self._store = store
         self._developer_id = developer_id
+        self._edits = edits
 
     def submit(self, draft: DraftPayload) -> str:
         """Persist a draft for manual or policy review. Returns draft_id."""
         payload_json = draft.payload.model_dump_json() if hasattr(draft.payload, "model_dump_json") else json.dumps(draft.payload)
-        period_start = getattr(draft.payload, "period_start", datetime.utcnow())
-        period_end = getattr(draft.payload, "period_end", datetime.utcnow())
+        period_start = getattr(draft.payload, "period_start", datetime.now(timezone.utc).replace(tzinfo=None))
+        period_end = getattr(draft.payload, "period_end", datetime.now(timezone.utc).replace(tzinfo=None))
         self._store.save_draft(
             draft_id=draft.draft_id,
             developer_id=self._developer_id,
@@ -61,6 +68,23 @@ class ApprovalGate:
             final_data = json.loads(final_json)
         else:
             final_data = final_json
+
+        # Record the edit-diff when the dev actually changed something before
+        # approving. Never fails loud — a broken insight write must not block
+        # the approval path.
+        if self._edits is not None and edited_payload is not None:
+            try:
+                diff = compute_diff(
+                    draft_id=draft_id,
+                    developer_id=self._developer_id,
+                    artifact_type=row.artifact_type,
+                    original=row.payload_json,
+                    edited=final_data,
+                )
+                if diff is not None:
+                    self._edits.record(diff)
+            except Exception as exc:
+                logger.debug("edit-diff capture skipped: %s", exc)
 
         payload = _deserialise(row.artifact_type, final_data)
 

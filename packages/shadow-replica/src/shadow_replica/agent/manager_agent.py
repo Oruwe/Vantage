@@ -22,6 +22,7 @@ from vantage.schemas import ChatTurn
 
 from shadow_replica.agent.chat_memory import ChatMemory, hash_manager_token
 from shadow_replica.agent import tools as toolmod
+from shadow_replica.observability import current_trace_id
 
 if TYPE_CHECKING:
     from shadow_replica.wiretap.bus import WiretapBus
@@ -316,7 +317,20 @@ class ManagerAgent:
         if not convo.title:
             self._memory.update_title_if_blank(convo.conversation_id, message)
 
-        yield {"type": "started", "conversation_id": convo.conversation_id}
+        # Correlation handoff: embed the HTTP trace_id into the started chunk
+        # so SSE consumers (dashboard, voice CLI) can log it alongside their
+        # own events. Falls back to "-" when the agent is driven outside an
+        # HTTP request (tests, scripted runs).
+        trace_id = current_trace_id()
+        logger.info(
+            "Manager agent run_turn_stream starting (convo=%s, loops_cap=%d)",
+            convo.conversation_id, _MAX_LOOPS,
+        )
+        yield {
+            "type": "started",
+            "conversation_id": convo.conversation_id,
+            "trace_id": trace_id,
+        }
 
         history_turns = self._memory.list_turns(convo.conversation_id)
         messages = _turns_to_anthropic_messages(history_turns)

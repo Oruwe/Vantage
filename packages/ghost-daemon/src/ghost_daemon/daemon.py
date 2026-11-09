@@ -75,6 +75,9 @@ class PairingStatus:
 from ghost_daemon.audit.log import AuditLog
 from ghost_daemon.approval.gate import ApprovalGate
 from ghost_daemon.config import Config
+from ghost_daemon.insights.collision_poller import CollisionPoller
+from ghost_daemon.insights.edit_store import EditDiffStore
+from ghost_daemon.insights.scrubber_hits import ScrubberHitStore
 from ghost_daemon.models.registry import build_from_config
 from ghost_daemon.storage.sqlite_store import SQLiteStore
 from ghost_daemon.storage.qdrant_store import QdrantStore
@@ -126,13 +129,24 @@ class GhostDaemon:
         self.project_map = ProjectMap(cfg)
         self.tailer = SessionTailer(cfg.state_dir)
         self.llm = build_from_config(cfg)
-        self.gate = ApprovalGate(self.store, cfg.developer_id)
+        self.edits = EditDiffStore(cfg.vantage_dir / "edits")
+        self.scrubber_hits = ScrubberHitStore(cfg.sqlite_path)
+        from ghost_daemon.redaction.scrubber import register_hit_sink
+        register_hit_sink(self.scrubber_hits.record_context)
+        self.gate = ApprovalGate(self.store, cfg.developer_id, edits=self.edits)
         self.subscriber_registry = SubscriberRegistry(cfg.sqlite_path)
         self.pairing_status = PairingStatus()
+        self.collisions = CollisionPoller(
+            subscribers=self.subscriber_registry,
+            developer_id=cfg.developer_id,
+        )
         self._app = build_app(
             self.store, self.gate, self.audit_log, self.subscriber_registry, cfg,
             qdrant=self.qdrant, llm=self.llm,
             pairing_status=self.pairing_status,
+            scrubber_hits=self.scrubber_hits,
+            edits=self.edits,
+            collisions=self.collisions,
         )
 
     async def start(self) -> None:

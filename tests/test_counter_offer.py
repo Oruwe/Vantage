@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -100,7 +100,7 @@ async def test_hours_denial_names_hours_in_reason(tmp_path):
     vantage_dir.mkdir()
     sub_id = "sub-mgr"
     # Enable LIVE_PROBE but set a 1-hour window that definitely excludes "now"
-    now_hour = datetime.utcnow().hour
+    now_hour = datetime.now(timezone.utc).replace(tzinfo=None).hour
     narrow_start = (now_hour + 2) % 24
     narrow_end = (now_hour + 3) % 24
     _write_policy(

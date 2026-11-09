@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
@@ -87,7 +87,7 @@ class ReceivedStore:
         approved_at: str,
     ) -> None:
         """Persist a received artifact (async — embeds and upserts to Qdrant)."""
-        received_at = datetime.utcnow().isoformat()
+        received_at = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
         row = ReceivedArtifactRow(
             approval_id=approval_id,
             developer_id=developer_id,
@@ -121,7 +121,7 @@ class ReceivedStore:
         approved_at: str,
     ) -> None:
         """Sync save — stores with zero-vector if embedder unavailable. Use save_async when possible."""
-        received_at = datetime.utcnow().isoformat()
+        received_at = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
         row = ReceivedArtifactRow(
             approval_id=approval_id,
             developer_id=developer_id,

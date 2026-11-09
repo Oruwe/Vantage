@@ -20,6 +20,9 @@ from vantage.schemas import ApprovalSource, Channel
 if TYPE_CHECKING:
     from ghost_daemon.config import Config
     from ghost_daemon.daemon import PairingStatus
+    from ghost_daemon.insights.collision_poller import CollisionPoller
+    from ghost_daemon.insights.edit_store import EditDiffStore
+    from ghost_daemon.insights.scrubber_hits import ScrubberHitStore
     from ghost_daemon.models.registry import LLMProvider
     from ghost_daemon.subscribers.registry import SubscriberRegistry
 
@@ -69,6 +72,173 @@ def _render(name: str, **ctx) -> str:
     return _env.get_template(name).render(**ctx)
 
 
+def _empty_totals():
+    """Placeholder HitTotals for when the privacy surface is called without a
+    scrubber-hit store wired up (e.g. in tests or minimal daemon setups)."""
+    from ghost_daemon.insights.scrubber_hits import HitTotals
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    return HitTotals(by_kind={}, total=0, window_start=now, window_end=now)
+
+
+def _flow_snapshot(cfg, *, days: int):
+    """Compute a FlowSnapshot from the dev's local sources.
+
+    Lives in a helper so both the HTML route and the JSON endpoint can share
+    it. Takes a conservative default-days clamp so an out-of-range query
+    parameter can't make the scan huge.
+    """
+    from ghost_daemon.insights import FlowAnalyzer
+    days = max(1, min(int(days), 30))
+    analyzer = FlowAnalyzer(
+        session_dirs=list(cfg.resolved_session_dirs),
+        sqlite_path=cfg.sqlite_path,
+    )
+    return analyzer.snapshot(days=days)
+
+
+def _edit_rate_trend(store, edits, *, weeks: int) -> dict:
+    """Per-artifact-type rolling weekly edit rates for the last ``weeks`` weeks.
+
+    Returns::
+
+        {
+          "standup": {
+            "points": [{"week_start": "...", "rate": 0.42, "approvals": 7, "edits": 3}, ...],
+            "latest": 0.42,
+            "previous": 0.55,
+            "delta_pct_points": -13.0,
+            "direction": "down" | "up" | "flat" | "unknown"
+          },
+          ...
+        }
+
+    ``rate`` is None when there were no approvals in that week (so the chart
+    can leave a gap rather than drawing zero). ``direction`` interprets WoW:
+    down = edit rate dropped (agent matching voice better),
+    up   = edit rate rose (agent got worse — or voice drifted).
+    """
+    if store is None or edits is None:
+        return {}
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    # Week buckets: oldest first, each 7 days wide, ending at `now`.
+    buckets: list[tuple[datetime, datetime]] = []
+    for i in range(weeks, 0, -1):
+        end = now - timedelta(days=(i - 1) * 7)
+        start = end - timedelta(days=7)
+        buckets.append((start, end))
+
+    # Collect every artifact_type we've seen in any bucket so the output is
+    # stable even when a type has zero weeks of activity.
+    seen_types: set[str] = set()
+    per_week_approvals: list[dict[str, int]] = []
+    per_week_edits: list[dict[str, int]] = []
+    for start, end in buckets:
+        a = store.count_approved_by_type_in_window(start, end)
+        e = edits.edits_by_type_in_window(start, end)
+        per_week_approvals.append(a)
+        per_week_edits.append(e)
+        seen_types.update(a)
+        seen_types.update(e)
+
+    trend: dict[str, dict] = {}
+    for artifact_type in sorted(seen_types):
+        points: list[dict] = []
+        for (start, end), a_map, e_map in zip(buckets, per_week_approvals, per_week_edits):
+            a = a_map.get(artifact_type, 0)
+            e = e_map.get(artifact_type, 0)
+            rate = (e / a) if a else None
+            points.append({
+                "week_start": start.date().isoformat(),
+                "approvals": a,
+                "edits": e,
+                "rate": rate,
+            })
+
+        rates = [p["rate"] for p in points if p["rate"] is not None]
+        latest = points[-1]["rate"]
+        previous = points[-2]["rate"] if len(points) >= 2 else None
+        direction = "unknown"
+        delta_pp: float | None = None
+        if latest is not None and previous is not None:
+            delta = (latest - previous) * 100.0  # in percentage points
+            delta_pp = round(delta, 1)
+            if abs(delta) < 3.0:
+                direction = "flat"
+            elif delta < 0:
+                direction = "down"   # edit rate dropped — agent improving
+            else:
+                direction = "up"     # edit rate rose — agent regressing
+
+        trend[artifact_type] = {
+            "points": points,
+            "latest": latest,
+            "previous": previous,
+            "delta_pct_points": delta_pp,
+            "direction": direction,
+            "sparkline_svg": _sparkline_svg(rates),
+        }
+    return trend
+
+
+def _sparkline_svg(rates: list[float], *, width: int = 80, height: int = 22) -> str:
+    """Render a tiny inline SVG sparkline for a sequence of rates (0.0–1.0).
+
+    Returns an empty string if there aren't enough points to draw a line.
+    """
+    if len(rates) < 2:
+        return ""
+    # Map rate in [0,1] to y in [height-2, 2] (invert so higher = worse = top).
+    n = len(rates)
+    step = width / (n - 1)
+    pts: list[str] = []
+    for i, r in enumerate(rates):
+        x = i * step
+        y = 2 + (height - 4) * r  # r=0 near top looks wrong — flip so low rate = low on chart
+        # Actually: lower rate = better = should visually look LOWER on the chart.
+        # Invert: y = (height - 2) - (height - 4) * r
+        y = (height - 2) - (height - 4) * r
+        pts.append(f"{x:.1f},{y:.1f}")
+    polyline = " ".join(pts)
+    stroke = "currentColor"
+    return (
+        f'<svg width="{width}" height="{height}" viewBox="0 0 {width} {height}" '
+        f'xmlns="http://www.w3.org/2000/svg" aria-hidden="true">'
+        f'<polyline fill="none" stroke="{stroke}" stroke-width="1.5" '
+        f'stroke-linecap="round" stroke-linejoin="round" points="{polyline}"/>'
+        f'</svg>'
+    )
+
+
+def _edit_rate_rows(store, edits, *, days: int) -> list[dict]:
+    """Build rolling edit-rate rows for the /privacy page.
+
+    rate = edits / approvals, per artifact_type, in the last ``days`` days.
+    When few-shot is working, this number should trend downward.
+    Returns an empty list if either store is missing (keeps the template simple).
+    """
+    if store is None or edits is None:
+        return []
+    from datetime import datetime, timedelta, timezone
+    since = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)
+    approvals = store.count_approved_by_type_since(since)
+    edit_counts = edits.edits_by_type_since(since)
+    rows: list[dict] = []
+    for artifact_type in sorted(set(approvals) | set(edit_counts)):
+        a = approvals.get(artifact_type, 0)
+        e = edit_counts.get(artifact_type, 0)
+        rate = (e / a) if a else None
+        rows.append({
+            "artifact_type": artifact_type,
+            "approvals": a,
+            "edits": e,
+            "rate": rate,
+        })
+    return rows
+
+
 def build_app(
     store: SQLiteStore,
     gate: ApprovalGate,
@@ -78,6 +248,9 @@ def build_app(
     qdrant: QdrantStore | None = None,
     llm: "LLMProvider | None" = None,
     pairing_status: "PairingStatus | None" = None,
+    scrubber_hits: "ScrubberHitStore | None" = None,
+    edits: "EditDiffStore | None" = None,
+    collisions: "CollisionPoller | None" = None,
 ) -> FastAPI:
     app = FastAPI(title="Vantage", docs_url=None, redoc_url=None)
 
@@ -209,6 +382,180 @@ def build_app(
     async def audit(request: Request, days: int = 7):
         entries = audit_log.read_recent(days=days)
         return HTMLResponse(_render("audit.html", request=request, entries=entries, days=days))
+
+    # ── Privacy (dev-only insights) ────────────────────────────────────────────
+
+    @app.get("/privacy", response_class=HTMLResponse)
+    async def privacy(request: Request):
+        totals = scrubber_hits.weekly_totals() if scrubber_hits else None
+        recent_edits = edits.read_recent(limit=20) if edits else []
+        edit_count = edits.count_in_shard() if edits else 0
+        rate_rows = _edit_rate_rows(store, edits, days=30)
+        trend = _edit_rate_trend(store, edits, weeks=8)
+        return HTMLResponse(_render(
+            "privacy.html",
+            request=request,
+            totals=totals or _empty_totals(),
+            edits=recent_edits,
+            edit_count=edit_count,
+            rate_rows=rate_rows,
+            trend=trend,
+        ))
+
+    @app.get("/api/privacy/edit-rate")
+    async def api_edit_rate(days: int = 30):
+        rate_rows = _edit_rate_rows(store, edits, days=days)
+        return JSONResponse({"days": days, "rows": rate_rows})
+
+    @app.get("/api/privacy/edit-rate-trend")
+    async def api_edit_rate_trend(weeks: int = 8):
+        weeks = max(2, min(int(weeks), 26))
+        trend = _edit_rate_trend(store, edits, weeks=weeks)
+        return JSONResponse({"weeks": weeks, "trend": trend})
+
+    # ── Flow-state (dev-only rear-view mirror) ─────────────────────────────────
+
+    @app.get("/flow", response_class=HTMLResponse)
+    async def flow(request: Request, days: int = 7):
+        snap = _flow_snapshot(cfg, days=days)
+        return HTMLResponse(_render(
+            "flow.html",
+            request=request,
+            snap=snap,
+            days=days,
+        ))
+
+    @app.get("/api/collisions")
+    async def api_collisions(force: bool = False):
+        """Dev-facing collision heads-up.
+
+        Aggregates recent collisions reported by every manager the dev
+        pushes to. Cached by the poller so this endpoint is cheap to poll
+        from the browser.
+        """
+        if collisions is None:
+            return JSONResponse({"count": 0, "collisions": [], "errors": []})
+        bundle = await collisions.get(force=bool(force))
+        return JSONResponse({
+            "fetched_at": bundle.fetched_at,
+            "count": bundle.count,
+            "collisions": [
+                {
+                    "collision_id": c.collision_id,
+                    "other_developer": c.other_developer,
+                    "other_developer_name": c.other_developer_name,
+                    "files": c.files,
+                    "kind": c.kind,
+                    "score": c.score,
+                    "detected_at": c.detected_at,
+                    "source_subscriber": c.source_subscriber,
+                }
+                for c in bundle.collisions
+            ],
+            "errors": bundle.errors,
+        })
+
+    @app.get("/api/flow")
+    async def api_flow(days: int = 7):
+        snap = _flow_snapshot(cfg, days=days)
+        return JSONResponse({
+            "days": snap.days,
+            "total_turns": snap.total_turns,
+            "active_hours": snap.active_hours,
+            "total_stuck_attempts": snap.total_stuck_attempts,
+            "heatmap": [
+                {"day_offset": c.day_offset, "hour": c.hour, "turn_count": c.turn_count}
+                for c in snap.heatmap
+            ],
+            "deep_windows": [
+                {
+                    "start": w.start.isoformat(),
+                    "end": w.end.isoformat(),
+                    "turn_count": w.turn_count,
+                    "duration_minutes": w.duration_minutes,
+                }
+                for w in snap.deep_windows
+            ],
+            "recent_approvals": [
+                {
+                    "draft_id": e.draft_id,
+                    "artifact_type": e.artifact_type,
+                    "reviewed_at": e.reviewed_at.isoformat(),
+                    "status": e.status,
+                }
+                for e in snap.recent_approvals
+            ],
+            "stuck_patterns": [
+                {
+                    "resolution_id": p.resolution_id,
+                    "error_signature": p.error_signature,
+                    "fix_summary": p.fix_summary,
+                    "attempt_count": p.attempt_count,
+                    "files_touched": p.files_touched,
+                    "created_at": p.created_at.isoformat(),
+                }
+                for p in snap.stuck_patterns
+            ],
+        })
+
+    @app.get("/api/privacy/totals")
+    async def api_privacy_totals():
+        totals = scrubber_hits.weekly_totals() if scrubber_hits else _empty_totals()
+        return JSONResponse({
+            "by_kind": totals.by_kind,
+            "total": totals.total,
+            "window_start": totals.window_start,
+            "window_end": totals.window_end,
+        })
+
+    @app.post("/api/privacy/override")
+    async def api_privacy_override(request: Request):
+        """Record a dev-reported false positive.
+
+        Request body: ``{"pattern": "<string>", "kind": "<redaction_kind>"}``.
+        Returns whether the current scrubber actually redacts the pattern
+        (so the UI can confirm the regression target is real).
+        """
+        if scrubber_hits is None:
+            return JSONResponse({"error": "override surface unavailable"}, status_code=503)
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse({"error": "invalid JSON body"}, status_code=400)
+        pattern = (body.get("pattern") or "").strip()
+        kind = (body.get("kind") or "").strip()
+        if not pattern:
+            return JSONResponse({"error": "pattern is required"}, status_code=400)
+        if not kind:
+            return JSONResponse({"error": "kind is required"}, status_code=400)
+        if len(pattern) > 500:
+            return JSONResponse({"error": "pattern too long (max 500 chars)"}, status_code=400)
+
+        # Confirm the current scrubber *would* redact this pattern — otherwise
+        # the dev is reporting against a kind that already doesn't match, and
+        # the override is a no-op.
+        from ghost_daemon.redaction.scrubber import scrub
+        ctx = scrub(pattern)
+        still_redacted = any(r.kind == kind for r in ctx.redactions)
+
+        scrubber_hits.record_override(pattern, kind)
+        return JSONResponse({
+            "recorded": True,
+            "still_redacted_by_current_scrubber": still_redacted,
+            "kind": kind,
+        })
+
+    @app.get("/api/privacy/overrides")
+    async def api_privacy_overrides(limit: int = 50):
+        if scrubber_hits is None:
+            return JSONResponse({"overrides": []})
+        rows = scrubber_hits.recent_overrides(limit=limit)
+        return JSONResponse({
+            "overrides": [
+                {"pattern": p, "kind": k, "overridden_at": at}
+                for p, k, at in rows
+            ],
+        })
 
     # ── Subscribers ────────────────────────────────────────────────────────────
 

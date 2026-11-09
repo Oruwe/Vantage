@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import uuid4
@@ -187,7 +187,7 @@ class ProbeAgent:
         if Channel.LIVE_PROBE not in policy.channels:
             return PolicyDecision.DENIED_BY_POLICY
 
-        now_hour = datetime.utcnow().hour
+        now_hour = datetime.now(timezone.utc).replace(tzinfo=None).hour
         h_start = policy.probe_hours_start
         h_end = policy.probe_hours_end
         if h_start is not None and h_end is not None:

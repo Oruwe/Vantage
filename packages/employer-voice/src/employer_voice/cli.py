@@ -69,19 +69,27 @@ def show_config(
 def ask(
     message: Annotated[str, typer.Argument(help="Message to send to the manager agent.")],
     stream: Annotated[bool, typer.Option("--stream/--no-stream", help="Show tool calls as they run.")] = False,
+    auto_approve: Annotated[bool, typer.Option("--auto-approve", help="Approve every dangerous-tool prompt without asking. For scripts/CI.")] = False,
+    deny_all: Annotated[bool, typer.Option("--deny-all", help="Deny every dangerous-tool prompt without asking. Safe default for unattended runs.")] = False,
     config: Annotated[str, typer.Option("--config")] = "",
 ) -> None:
-    """One text turn against the manager agent."""
+    """One text turn against the manager agent.
+
+    If the agent pauses on a dangerous tool (requires_confirmation=True),
+    the stream mode prompts the manager for yes/no and resumes. Use
+    ``--auto-approve`` or ``--deny-all`` to bypass the prompt in scripts.
+    """
+    if auto_approve and deny_all:
+        typer.echo("Error: --auto-approve and --deny-all are mutually exclusive.", err=True)
+        raise typer.Exit(code=1)
+    policy: Optional[bool] = True if auto_approve else (False if deny_all else None)
+
     path = _resolve_config_path(config)
     from employer_voice import session as _sess
 
     try:
         if stream:
-            summary = asyncio.run(_sess.ask_stream(
-                message,
-                config_path=path,
-                on_event=_print_stream_event,
-            ))
+            summary = asyncio.run(_run_stream_with_approval(message, path, policy))
             if summary.assistant_text:
                 typer.echo("")
                 typer.echo(summary.assistant_text)
@@ -94,6 +102,55 @@ def ask(
     except Exception as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=1)
+
+
+async def _run_stream_with_approval(
+    message: str,
+    config_path: Optional[Path],
+    policy: Optional[bool],
+) -> "object":
+    """Run ask_stream then loop through pending approvals until the turn ends.
+
+    ``policy`` is True to auto-approve, False to auto-deny, or None to prompt.
+    Returns the final StreamSummary (post-resume chain).
+    """
+    from employer_voice import session as _sess
+
+    summary = await _sess.ask_stream(
+        message, config_path=config_path, on_event=_print_stream_event,
+    )
+    # Guard against unbounded resume chains if the agent keeps requesting
+    # dangerous tools. Matches the dashboard's UX (one approval per card).
+    safety = 0
+    while summary.pending_approval and summary.pending_tool_use_id:
+        safety += 1
+        if safety > 8:
+            typer.echo("  [stopped — too many consecutive approval requests]", err=True)
+            break
+        decision = _resolve_approval(summary, policy)
+        typer.echo("")
+        typer.echo(f"  [{'approved' if decision else 'denied'}] → resuming…")
+        summary = await _sess.resume_approval(
+            tool_use_id=summary.pending_tool_use_id,
+            approved=decision,
+            config_path=config_path,
+            on_event=_print_stream_event,
+        )
+    return summary
+
+
+def _resolve_approval(summary, policy: Optional[bool]) -> bool:
+    tool = summary.pending_tool_name or "?"
+    args = summary.pending_tool_args or {}
+    typer.echo("")
+    typer.echo(f"  ⚠ Agent wants to run: {tool}({_short_args(args)})")
+    if policy is True:
+        typer.echo("  (--auto-approve) → yes")
+        return True
+    if policy is False:
+        typer.echo("  (--deny-all) → no")
+        return False
+    return typer.confirm("  Approve?", default=False)
 
 
 @app.command("conversations")

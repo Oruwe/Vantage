@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -102,7 +102,7 @@ class Scheduler:
                     self._cfg.schedule.standup, self._cfg.schedule.digest)
         while True:
             await asyncio.sleep(60)
-            now = datetime.utcnow().replace(second=0, microsecond=0)
+            now = datetime.now(timezone.utc).replace(tzinfo=None).replace(second=0, microsecond=0)
             minute_key = now.strftime("%Y-%m-%dT%H:%M")
 
             jobs = {
@@ -140,6 +140,7 @@ class Scheduler:
         agent = StandupAgent(
             self._cfg, self._daemon.llm,
             self._daemon.project_map, self._daemon.tailer,
+            edits=getattr(self._daemon, "edits", None),
         )
         draft = await agent.run(since=since)
         draft_id = self._daemon.gate.submit(draft)
@@ -153,6 +154,7 @@ class Scheduler:
             self._cfg, self._daemon.llm,
             self._daemon.project_map, self._daemon.tailer,
             qdrant=self._daemon.qdrant,
+            edits=getattr(self._daemon, "edits", None),
         )
         draft = await agent.run(period_start, period_end)
         draft_id = self._daemon.gate.submit(draft)

@@ -104,6 +104,49 @@ class ReplicaClient:
             async for ev in _stream_sse(c, f"{self._base_url}/ui/api/chat/stream", self._headers, body):
                 yield ev
 
+    # ── Approval (dangerous-tool resume) ──────────────────────────────────────
+    async def chat_approve_stream(
+        self,
+        tool_use_id: str,
+        approved: bool,
+        *,
+        client: httpx.AsyncClient | None = None,
+    ) -> AsyncIterator[dict]:
+        """Resume a paused agent run after the manager says yes/no.
+
+        Yields the same SSE event dicts as ``chat_stream`` — starting with
+        the tool_result for the resolved call and continuing through the
+        rest of the turn."""
+        body: dict[str, Any] = {"tool_use_id": tool_use_id, "approved": bool(approved)}
+        if client is not None:
+            async for ev in _stream_sse(client, f"{self._base_url}/ui/api/chat/approve", self._headers, body):
+                yield ev
+            return
+        async with httpx.AsyncClient(timeout=self._timeout) as c:
+            async for ev in _stream_sse(c, f"{self._base_url}/ui/api/chat/approve", self._headers, body):
+                yield ev
+
+    async def get_pending_approval(
+        self,
+        tool_use_id: str,
+        *,
+        client: httpx.AsyncClient | None = None,
+    ) -> dict:
+        """Peek at a pending approval: returns {tool_name, tool_input, ...}."""
+        async def _do(c: httpx.AsyncClient) -> dict:
+            r = await c.get(
+                f"{self._base_url}/ui/api/chat/pending/{tool_use_id}",
+                headers=self._headers,
+            )
+            if r.status_code // 100 != 2:
+                raise ReplicaError(f"get_pending_approval failed: {r.status_code} {r.text[:300]}")
+            return dict(r.json())
+
+        if client is not None:
+            return await _do(client)
+        async with httpx.AsyncClient(timeout=self._timeout) as c:
+            return await _do(c)
+
     # ── Conversations ─────────────────────────────────────────────────────────
     async def list_conversations(self, limit: int = 20, *, client: httpx.AsyncClient | None = None) -> list[dict]:
         async def _do(c: httpx.AsyncClient) -> list[dict]:

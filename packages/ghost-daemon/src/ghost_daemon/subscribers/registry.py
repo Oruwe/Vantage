@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import secrets
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from sqlmodel import Field, Session, SQLModel, create_engine, select
@@ -57,7 +57,7 @@ class SubscriberRegistry:
         sub_id = f"sub_{secrets.token_hex(6)}"
         token_plain = _TOKEN_PREFIX + secrets.token_urlsafe(32)
         channels_json = json.dumps([c.value if hasattr(c, "value") else c for c in channels])
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
         row = SubscriberRow(
             id=sub_id,
             name=name,
@@ -92,7 +92,7 @@ class SubscriberRegistry:
             if not row or row.revoked_at:
                 return None
 
-            now = datetime.utcnow().isoformat()
+            now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
             # Record old token in history
             old_history = TokenHistoryRow(
                 history_id=secrets.token_hex(8),
@@ -165,7 +165,7 @@ class SubscriberRegistry:
             row = session.get(SubscriberRow, subscriber_id)
             if not row:
                 return False
-            now = datetime.utcnow().isoformat()
+            now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
             # Record final history entry
             final_history = TokenHistoryRow(
                 history_id=secrets.token_hex(8),

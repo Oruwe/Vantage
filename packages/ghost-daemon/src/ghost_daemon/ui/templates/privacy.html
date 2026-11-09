@@ -1,0 +1,209 @@
+{% extends "base.html" %}
+{% block title %}Privacy{% endblock %}
+{% set active_page = 'privacy' %}
+{% block content %}
+<h1>Privacy — what your scrubber caught</h1>
+
+<p class="meta" style="margin-bottom:1.5rem;max-width:560px">
+  Everything on this page is <strong style="color:var(--em)">local</strong>. These counts live
+  on your laptop in <code>vantage.db</code>, never leave it, and are not visible to your manager.
+  They exist so you can see the redactor doing its job.
+</p>
+
+<div class="card" style="margin-bottom:1.25rem">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem">
+    <h2 style="margin:0">Last 7 days</h2>
+    <span class="meta" style="margin:0;font-family:var(--mono)">{{ totals.total }} redactions</span>
+  </div>
+  {% if totals.by_kind %}
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:0.75rem;margin-top:1rem">
+    {% for kind, n in totals.by_kind.items() | sort(attribute='1', reverse=True) %}
+    <div style="padding:0.75rem;background:var(--sf2);border:1px solid var(--bd);border-radius:8px;position:relative">
+      <div style="font-size:0.72rem;color:var(--tx3);font-family:var(--mono);text-transform:uppercase;letter-spacing:0.04em">
+        {{ kind | replace('_', ' ') }}
+      </div>
+      <div style="font-size:1.6rem;color:var(--am);font-weight:600;margin-top:0.25rem;font-family:var(--mono)">
+        {{ n }}
+      </div>
+      <button class="btn-ghost" style="font-size:0.68rem;padding:0.25rem 0.5rem;margin-top:0.5rem"
+              onclick="reportFalsePositive('{{ kind }}')">report false positive</button>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="empty" style="padding:1.5rem">
+    No scrubber hits in the last week — either you've been writing nothing sensitive,
+    or the daemon hasn't processed much content yet.
+  </div>
+  {% endif %}
+</div>
+
+<h2 style="margin-top:2rem;margin-bottom:0.75rem">Edit rate — is the agent learning your voice?</h2>
+<p class="meta" style="margin-bottom:1rem;max-width:560px">
+  Edits ÷ approvals over the last 30 days, per artifact type. If the few-shot
+  loop is working, this number should trend <strong style="color:var(--em)">down</strong>
+  over time — the agent gets closer to drafts you don't need to edit.
+</p>
+
+{% if rate_rows %}
+<div class="card" style="padding:0;overflow:hidden">
+<table>
+  <thead>
+    <tr>
+      <th>Artifact type</th>
+      <th>Approvals</th>
+      <th>Edits</th>
+      <th>Edit rate</th>
+      <th>Trend (8w)</th>
+      <th>Week-over-week</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for row in rate_rows %}
+  {% set t = trend.get(row.artifact_type, {}) %}
+  <tr>
+    <td><span class="badge badge-pending" style="animation:none">{{ row.artifact_type }}</span></td>
+    <td style="font-family:var(--mono);font-size:0.82rem;color:var(--tx2)">{{ row.approvals }}</td>
+    <td style="font-family:var(--mono);font-size:0.82rem;color:var(--tx2)">{{ row.edits }}</td>
+    <td style="font-family:var(--mono);font-size:0.82rem;color:{% if row.rate is none %}var(--tx3){% elif row.rate < 0.3 %}var(--em){% elif row.rate < 0.6 %}var(--am){% else %}var(--re){% endif %}">
+      {% if row.rate is none %}—{% else %}{{ '%.0f' % (row.rate * 100) }}%{% endif %}
+    </td>
+    <td style="color:{% if t.direction == 'down' %}var(--em){% elif t.direction == 'up' %}var(--re){% else %}var(--tx3){% endif %}">
+      {% if t.sparkline_svg %}{{ t.sparkline_svg | safe }}{% else %}<span style="color:var(--tx3);font-size:0.78rem">not enough data</span>{% endif %}
+    </td>
+    <td style="font-family:var(--mono);font-size:0.82rem">
+      {% if t.direction == 'down' %}
+        <span style="color:var(--em)">▼ {{ t.delta_pct_points }} pp — improving</span>
+      {% elif t.direction == 'up' %}
+        <span style="color:var(--re)">▲ +{{ t.delta_pct_points }} pp — regressing</span>
+      {% elif t.direction == 'flat' %}
+        <span style="color:var(--am)">— flat ({{ t.delta_pct_points }} pp)</span>
+      {% else %}
+        <span style="color:var(--tx3)">—</span>
+      {% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+<p class="meta" style="margin-top:0.5rem;font-size:0.72rem;max-width:620px">
+  Trend is rolling weekly edit rate over the last 8 weeks (left = oldest, right = this week).
+  Lower on the chart = better (agent needed less editing). Week-over-week arrow compares the
+  latest complete week vs the one before it.
+</p>
+{% else %}
+<div class="empty">Not enough data yet — once you approve a few drafts, this will populate.</div>
+{% endif %}
+
+<h2 style="margin-top:2rem;margin-bottom:0.75rem">Edits you made before approving</h2>
+<p class="meta" style="margin-bottom:1rem">
+  Each row is a time you changed what the agent proposed before clicking Approve.
+  This becomes your personal fine-tuning dataset — the agent will learn from it
+  (still 100% local). Right now there are <strong>{{ edit_count }}</strong> edits
+  recorded this month.
+</p>
+
+{% if edits %}
+<div class="card" style="padding:0;overflow:hidden">
+<table>
+  <thead>
+    <tr>
+      <th>When</th>
+      <th>Type</th>
+      <th>Fields changed</th>
+      <th>Δ chars</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for e in edits %}
+  <tr>
+    <td style="white-space:nowrap;font-size:0.78rem;color:var(--tx3);font-family:var(--mono)">
+      {{ e.approved_at[:16] | replace('T', ' ') }}
+    </td>
+    <td><span class="badge badge-pending" style="animation:none">{{ e.artifact_type }}</span></td>
+    <td style="font-family:var(--mono);font-size:0.76rem;color:var(--tx2)">
+      {% for f in e.changed_fields %}<code style="margin-right:4px">{{ f }}</code>{% endfor %}
+    </td>
+    <td style="font-family:var(--mono);font-size:0.78rem;color:{% if e.edited_chars >= e.original_chars %}var(--em){% else %}var(--am){% endif %}">
+      {% set delta = e.edited_chars - e.original_chars %}
+      {{ '+' if delta >= 0 else '' }}{{ delta }}
+    </td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<div class="empty">You haven't edited any drafts yet. Once you do, your edits land here.</div>
+{% endif %}
+
+<!-- ── False-positive reporter ────────────────────────────────────────── -->
+<div id="fp-modal" style="display:none;position:fixed;inset:0;background:rgba(10,10,13,.75);z-index:100;align-items:center;justify-content:center;backdrop-filter:blur(4px)"
+     onclick="if(event.target.id==='fp-modal')closeFPModal()">
+  <div class="card" style="max-width:520px;width:92%;margin:0">
+    <h2 style="margin-top:0">Report a false positive</h2>
+    <p class="meta" style="margin-bottom:0.75rem">
+      Paste a string that your scrubber redacted as
+      <code id="fp-kind" style="color:var(--am)">—</code>
+      but that is <em>not actually a secret</em>. We'll remember it so the
+      next scrubber regression test checks for it. Stored locally only.
+    </p>
+    <textarea id="fp-input" style="min-height:120px" placeholder="paste the false-positive string…"></textarea>
+    <div id="fp-status" style="font-size:0.78rem;color:var(--tx3);margin-top:0.5rem;font-family:var(--mono)"></div>
+    <div class="actions">
+      <button class="btn-approve" onclick="submitFP()">submit override</button>
+      <button class="btn-ghost" onclick="closeFPModal()">cancel</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let _fpCurrentKind = null;
+function reportFalsePositive(kind) {
+  _fpCurrentKind = kind;
+  document.getElementById('fp-kind').textContent = kind;
+  document.getElementById('fp-input').value = '';
+  document.getElementById('fp-status').textContent = '';
+  document.getElementById('fp-modal').style.display = 'flex';
+  setTimeout(() => document.getElementById('fp-input').focus(), 50);
+}
+function closeFPModal() {
+  document.getElementById('fp-modal').style.display = 'none';
+  _fpCurrentKind = null;
+}
+async function submitFP() {
+  const pattern = document.getElementById('fp-input').value.trim();
+  const status = document.getElementById('fp-status');
+  if (!pattern) { status.textContent = 'paste a string first'; return; }
+  if (!_fpCurrentKind) return;
+  status.textContent = 'submitting…';
+  try {
+    const r = await fetch('/api/privacy/override', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({pattern, kind: _fpCurrentKind}),
+    });
+    const d = await r.json();
+    if (!r.ok) {
+      status.style.color = 'var(--re)';
+      status.textContent = d.error || 'failed to record';
+      return;
+    }
+    status.style.color = d.still_redacted_by_current_scrubber ? 'var(--em)' : 'var(--am)';
+    status.textContent = d.still_redacted_by_current_scrubber
+      ? '✓ recorded — this string still matches the scrubber. It will run as a regression target.'
+      : '✓ recorded — but the current scrubber already lets this through. No regression target needed.';
+    setTimeout(closeFPModal, 1800);
+  } catch (e) {
+    status.style.color = 'var(--re)';
+    status.textContent = 'network error — override not saved';
+  }
+}
+// Esc closes the modal
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeFPModal();
+});
+</script>
+
+{% endblock %}

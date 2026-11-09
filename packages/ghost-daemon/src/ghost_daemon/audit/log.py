@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from vantage.schemas import ApprovalSource, AuditEntry, RedactedContext
@@ -17,7 +17,7 @@ class AuditLog:
         self._dir.mkdir(parents=True, exist_ok=True)
 
     def _today_file(self) -> Path:
-        return self._dir / f"{datetime.utcnow().date()}.jsonl"
+        return self._dir / f"{datetime.now(timezone.utc).replace(tzinfo=None).date()}.jsonl"
 
     def record(
         self,
@@ -58,7 +58,7 @@ class AuditLog:
 
     def read_recent(self, days: int = 7) -> list[AuditEntry]:
         entries: list[AuditEntry] = []
-        cutoff = datetime.utcnow().date() - timedelta(days=days)
+        cutoff = datetime.now(timezone.utc).replace(tzinfo=None).date() - timedelta(days=days)
         for jsonl in sorted(self._dir.glob("*.jsonl"), reverse=True):
             try:
                 file_date = datetime.strptime(jsonl.stem, "%Y-%m-%d").date()
@@ -76,7 +76,7 @@ class AuditLog:
         return entries
 
     def purge_old(self) -> None:
-        cutoff = datetime.utcnow().date() - timedelta(days=self._retention_days)
+        cutoff = datetime.now(timezone.utc).replace(tzinfo=None).date() - timedelta(days=self._retention_days)
         for jsonl in self._dir.glob("*.jsonl"):
             try:
                 file_date = datetime.strptime(jsonl.stem, "%Y-%m-%d").date()

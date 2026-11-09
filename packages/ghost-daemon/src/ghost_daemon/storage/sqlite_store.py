@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +19,7 @@ class DigestDraftRow(SQLModel, table=True):
     payload_json: str
     status: str = "pending"  # pending | approved | rejected
     edited_payload_json: str | None = None
-    created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).replace(tzinfo=None).isoformat())
     reviewed_at: str | None = None
     approval_source: str | None = None
 
@@ -61,7 +61,7 @@ class SQLiteStore:
             if not row:
                 raise KeyError(f"Draft {draft_id!r} not found")
             row.status = "approved"
-            row.reviewed_at = datetime.utcnow().isoformat()
+            row.reviewed_at = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
             row.approval_source = approval_source
             if edited_payload is not None:
                 row.edited_payload_json = (
@@ -87,6 +87,43 @@ class SQLiteStore:
             if not row:
                 raise KeyError(f"Draft {draft_id!r} not found")
             row.status = "rejected"
-            row.reviewed_at = datetime.utcnow().isoformat()
+            row.reviewed_at = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
             session.add(row)
             session.commit()
+
+    def count_approved_by_type_since(self, since: datetime) -> dict[str, int]:
+        """Return number of approved drafts per artifact_type since ``since``.
+
+        Used by the /privacy page to compute edit-rate = edits / approvals.
+        """
+        since_iso = since.isoformat()
+        counts: dict[str, int] = {}
+        with Session(self._engine) as session:
+            rows = session.exec(
+                select(DigestDraftRow)
+                .where(DigestDraftRow.status == "approved")
+                .where(DigestDraftRow.reviewed_at >= since_iso)  # type: ignore[operator]
+            ).all()
+            for r in rows:
+                counts[r.artifact_type] = counts.get(r.artifact_type, 0) + 1
+        return counts
+
+    def count_approved_by_type_in_window(
+        self, start: datetime, end: datetime,
+    ) -> dict[str, int]:
+        """Approvals per artifact_type where ``start <= reviewed_at < end``."""
+        if end <= start:
+            return {}
+        start_iso = start.isoformat()
+        end_iso = end.isoformat()
+        counts: dict[str, int] = {}
+        with Session(self._engine) as session:
+            rows = session.exec(
+                select(DigestDraftRow)
+                .where(DigestDraftRow.status == "approved")
+                .where(DigestDraftRow.reviewed_at >= start_iso)  # type: ignore[operator]
+                .where(DigestDraftRow.reviewed_at < end_iso)  # type: ignore[operator]
+            ).all()
+            for r in rows:
+                counts[r.artifact_type] = counts.get(r.artifact_type, 0) + 1
+        return counts

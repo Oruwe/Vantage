@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
 from vantage.schemas import IncrementalSummary
@@ -120,7 +120,7 @@ class QdrantStore:
                 "artifact_type": artifact_type,
                 "payload_json": json.dumps(payload),
                 "text_excerpt": text[:500],
-                "approved_at": approved_at or datetime.utcnow().isoformat(),
+                "approved_at": approved_at or datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
             }
             self._client.upsert(  # type: ignore[union-attr]
                 collection_name=_COL_APPROVED,

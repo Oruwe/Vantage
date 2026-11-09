@@ -1,0 +1,183 @@
+{% extends "base.html" %}
+{% block title %}Flow{% endblock %}
+{% set active_page = 'flow' %}
+{% block content %}
+<h1>Flow — your week, as the ghost saw it</h1>
+
+<p class="meta" style="margin-bottom:1.5rem;max-width:620px">
+  Everything on this page is <strong style="color:var(--em)">local</strong>.
+  It's built from timestamps in your session logs and approval history — the
+  manager sees polished artifacts; you see the raw rhythm. That asymmetry is
+  on purpose.
+</p>
+
+<!-- ── Summary stats ─────────────────────────────────────────────────── -->
+<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:0.75rem;margin-bottom:1.5rem">
+  <div style="padding:0.9rem;background:var(--sf);border:1px solid var(--bd);border-radius:10px">
+    <div style="font-size:0.7rem;color:var(--tx3);font-family:var(--mono);text-transform:uppercase;letter-spacing:0.05em">Turns</div>
+    <div style="font-size:1.6rem;color:var(--p);font-weight:600;font-family:var(--mono)">{{ snap.total_turns }}</div>
+    <div style="font-size:0.72rem;color:var(--tx3)">last {{ snap.days }} day{% if snap.days != 1 %}s{% endif %}</div>
+  </div>
+  <div style="padding:0.9rem;background:var(--sf);border:1px solid var(--bd);border-radius:10px">
+    <div style="font-size:0.7rem;color:var(--tx3);font-family:var(--mono);text-transform:uppercase;letter-spacing:0.05em">Active hours</div>
+    <div style="font-size:1.6rem;color:var(--te);font-weight:600;font-family:var(--mono)">{{ snap.active_hours }}</div>
+    <div style="font-size:0.72rem;color:var(--tx3);">distinct hour-buckets with activity</div>
+  </div>
+  <div style="padding:0.9rem;background:var(--sf);border:1px solid var(--bd);border-radius:10px">
+    <div style="font-size:0.7rem;color:var(--tx3);font-family:var(--mono);text-transform:uppercase;letter-spacing:0.05em">Deep windows</div>
+    <div style="font-size:1.6rem;color:var(--em);font-weight:600;font-family:var(--mono)">{{ snap.deep_windows | length }}</div>
+    <div style="font-size:0.72rem;color:var(--tx3);">≥25min stretches of sustained work</div>
+  </div>
+  <div style="padding:0.9rem;background:var(--sf);border:1px solid var(--bd);border-radius:10px">
+    <div style="font-size:0.7rem;color:var(--tx3);font-family:var(--mono);text-transform:uppercase;letter-spacing:0.05em">Stuck attempts</div>
+    <div style="font-size:1.6rem;color:{% if snap.total_stuck_attempts >= 20 %}var(--re){% elif snap.total_stuck_attempts >= 5 %}var(--am){% else %}var(--tx2){% endif %};font-weight:600;font-family:var(--mono)">{{ snap.total_stuck_attempts }}</div>
+    <div style="font-size:0.72rem;color:var(--tx3);">failed turns before each fix (sum)</div>
+  </div>
+</div>
+
+<!-- ── Heatmap ───────────────────────────────────────────────────────── -->
+<h2 style="margin-top:1.5rem;margin-bottom:0.5rem">Rhythm — turns per hour</h2>
+<p class="meta" style="margin-bottom:0.75rem">Rows are days (top = today); cells are hours (left = midnight UTC). Darker = busier.</p>
+
+<div class="card" style="padding:0.75rem;overflow-x:auto">
+  {% set max_count = snap.heatmap | map(attribute='turn_count') | max %}
+  {% set scale = max_count if max_count > 0 else 1 %}
+  <div style="display:grid;grid-template-columns:repeat(24,minmax(16px,1fr));gap:2px;font-family:var(--mono);font-size:0.65rem">
+    {% for cell in snap.heatmap %}
+      {% set intensity = (cell.turn_count / scale) if scale else 0 %}
+      <div title="{% if cell.day_offset == 0 %}today{% else %}{{ cell.day_offset }}d ago{% endif %} · {{ '%02d:00' % cell.hour }} · {{ cell.turn_count }} turn{% if cell.turn_count != 1 %}s{% endif %}"
+           style="aspect-ratio:1;border-radius:3px;background:{% if cell.turn_count == 0 %}var(--sf2){% else %}oklch({{ 25 + 50 * intensity }}% 0.18 280 / {{ 0.35 + 0.65 * intensity }}){% endif %};"></div>
+    {% endfor %}
+  </div>
+  <div style="margin-top:0.4rem;font-size:0.68rem;color:var(--tx3);font-family:var(--mono);display:flex;justify-content:space-between">
+    <span>00</span><span>06</span><span>12</span><span>18</span><span>23</span>
+  </div>
+</div>
+
+<!-- ── Deep-work windows ─────────────────────────────────────────────── -->
+<h2 style="margin-top:1.5rem;margin-bottom:0.5rem">Deep-work windows</h2>
+<p class="meta" style="margin-bottom:0.75rem">
+  Continuous activity with no gap longer than 10 minutes. Newest first.
+</p>
+
+{% if snap.deep_windows %}
+<div class="card" style="padding:0;overflow:hidden">
+<table>
+  <thead>
+    <tr>
+      <th>Start</th>
+      <th>Duration</th>
+      <th>Turns</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for w in snap.deep_windows %}
+  <tr>
+    <td style="white-space:nowrap;font-size:0.82rem;font-family:var(--mono);color:var(--tx2)">
+      {{ w.start.strftime('%m-%d %H:%M') }} UTC
+    </td>
+    <td style="font-family:var(--mono);font-size:0.82rem;color:var(--em);font-weight:600">
+      {{ w.duration_minutes }} min
+    </td>
+    <td style="font-family:var(--mono);font-size:0.82rem;color:var(--tx2)">
+      {{ w.turn_count }}
+    </td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<div class="empty">No deep-work windows in the last {{ snap.days }} day{% if snap.days != 1 %}s{% endif %} — either light activity or lots of context switches.</div>
+{% endif %}
+
+<!-- ── Stuck patterns ────────────────────────────────────────────────── -->
+<h2 style="margin-top:1.5rem;margin-bottom:0.5rem">Stuck patterns — what tripped you up</h2>
+<p class="meta" style="margin-bottom:0.75rem;max-width:620px">
+  Error loops the Dejavu detector caught — multiple failed turns against a
+  similar error, then a successful fix. These become reusable resolutions
+  the next time anyone on the team hits the same error.
+</p>
+
+{% if snap.stuck_patterns %}
+<div class="card" style="padding:0;overflow:hidden">
+<table>
+  <thead>
+    <tr>
+      <th>When</th>
+      <th>Error signature</th>
+      <th>Fix</th>
+      <th>Attempts</th>
+      <th>Files</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for p in snap.stuck_patterns %}
+  <tr>
+    <td style="white-space:nowrap;font-size:0.78rem;color:var(--tx3);font-family:var(--mono)">
+      {{ p.created_at.strftime('%m-%d %H:%M') }}
+    </td>
+    <td style="font-family:var(--mono);font-size:0.78rem;color:var(--am);max-width:220px;word-break:break-word">
+      {{ p.error_signature or '(no signature)' }}
+    </td>
+    <td style="font-size:0.82rem;color:var(--tx2);max-width:320px">
+      {{ p.fix_summary or '(no summary)' }}
+    </td>
+    <td style="font-family:var(--mono);font-size:0.82rem;color:{% if p.attempt_count >= 5 %}var(--re){% elif p.attempt_count >= 3 %}var(--am){% else %}var(--tx2){% endif %};text-align:center">
+      {{ p.attempt_count }}
+    </td>
+    <td style="font-family:var(--mono);font-size:0.72rem;color:var(--tx3);max-width:180px;word-break:break-word">
+      {% if p.files_touched %}
+        {% for f in p.files_touched[:3] %}<div>{{ f }}</div>{% endfor %}
+        {% if p.files_touched | length > 3 %}<div style="color:var(--tx3)">+{{ p.files_touched|length - 3 }} more</div>{% endif %}
+      {% else %}—{% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<div class="empty">No stuck patterns in this window — either smooth sailing, or the detector hasn't spotted any yet.</div>
+{% endif %}
+
+<!-- ── Approval timeline ─────────────────────────────────────────────── -->
+<h2 style="margin-top:1.5rem;margin-bottom:0.5rem">Recent approvals</h2>
+<p class="meta" style="margin-bottom:0.75rem">
+  Every draft you reviewed in this window — approvals and rejects both.
+</p>
+
+{% if snap.recent_approvals %}
+<div class="card" style="padding:0;overflow:hidden">
+<table>
+  <thead>
+    <tr>
+      <th>When</th>
+      <th>Type</th>
+      <th>Status</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for a in snap.recent_approvals %}
+  <tr>
+    <td style="white-space:nowrap;font-size:0.82rem;font-family:var(--mono);color:var(--tx2)">
+      {{ a.reviewed_at.strftime('%m-%d %H:%M') }} UTC
+    </td>
+    <td><span class="badge badge-pending" style="animation:none">{{ a.artifact_type }}</span></td>
+    <td>
+      {% if a.status == 'approved' %}
+        <span class="badge badge-approved" style="animation:none">approved</span>
+      {% else %}
+        <span class="badge badge-rejected" style="animation:none">{{ a.status }}</span>
+      {% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<div class="empty">No approvals in the last {{ snap.days }} day{% if snap.days != 1 %}s{% endif %}.</div>
+{% endif %}
+
+{% endblock %}

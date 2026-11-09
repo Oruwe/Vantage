@@ -35,3 +35,9 @@ probe_latency = Histogram(
     "Time to complete a live probe (excluding offline fallback)",
     buckets=[0.1, 0.25, 0.5, 1.0, 2.0, 3.0, 5.0],
 )
+
+eval_run_total = Counter(
+    "vantage_eval_run_total",
+    "Eval scenario outcomes. Labels distinguish suite (scrubber / manager_agent) and outcome (pass / fail / error / skip).",
+    ["suite", "outcome"],
+)

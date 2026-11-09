@@ -10,6 +10,7 @@ from langgraph.graph import END, START, StateGraph
 
 from vantage.schemas import CommitReport, DraftPayload, RedactedContext
 from ghost_daemon.config import Config
+from ghost_daemon.insights import EditDiffStore, render_system_suffix, select_examples
 from ghost_daemon.models.registry import LLMProvider
 from ghost_daemon.redaction.scrubber import scrub
 from ghost_daemon.storage.qdrant_store import QdrantStore
@@ -54,11 +55,13 @@ class CommitAgent:
         llm: LLMProvider,
         tailer: SessionTailer,
         qdrant: QdrantStore | None = None,
+        edits: EditDiffStore | None = None,
     ) -> None:
         self._cfg = cfg
         self._llm = llm
         self._tailer = tailer
         self._qdrant = qdrant
+        self._edits = edits
         self._graph = self._build()
 
     async def run(
@@ -162,9 +165,12 @@ class CommitAgent:
             f"{history_block}"
         )
         try:
+            system_prompt = _SYSTEM_PROMPT + render_system_suffix(
+                select_examples(self._edits, artifact_type="commit_report"),
+            )
             output = await self._llm.complete(
                 messages=[
-                    {"role": "system", "content": _SYSTEM_PROMPT},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_msg},
                 ],
                 max_tokens=400,

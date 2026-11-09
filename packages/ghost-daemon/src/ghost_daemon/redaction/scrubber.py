@@ -1,12 +1,33 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import math
 import re
 from collections import Counter
 from fnmatch import fnmatch
+from typing import Callable
 
 from vantage.schemas import Redaction, RedactedContext
+
+logger = logging.getLogger(__name__)
+
+# Optional module-level sinks: callables that receive every completed
+# RedactedContext. Used by the ghost-daemon to count scrubber hits for the
+# /privacy page. Sinks run best-effort — exceptions are swallowed so a bad
+# sink never breaks the scrub path.
+_hit_sinks: list[Callable[[RedactedContext], None]] = []
+
+
+def register_hit_sink(sink: Callable[[RedactedContext], None]) -> None:
+    """Register a callback that runs on every scrub() result. Idempotent."""
+    if sink not in _hit_sinks:
+        _hit_sinks.append(sink)
+
+
+def clear_hit_sinks() -> None:
+    """Remove every registered sink. Called by tests to isolate state."""
+    _hit_sinks.clear()
 
 # Files where the generic high-entropy check is disabled to avoid mangling
 # lockfile hashes, minified code, and binary assets.
@@ -109,12 +130,18 @@ def scrub(text: str, file_path: str | None = None) -> RedactedContext:
             redactions.append(Redaction(kind="high_entropy", placeholder=ph, position=start))
             result = result[:start] + ph + result[end:]
 
-    return RedactedContext(
+    ctx = RedactedContext(
         original_length=original_length,
         scrubbed_text=result,
         redactions=redactions,
         file_path=file_path,
     )
+    for sink in _hit_sinks:
+        try:
+            sink(ctx)
+        except Exception as exc:
+            logger.debug("scrubber hit sink raised: %s", exc)
+    return ctx
 
 
 def scrub_turns(turns: list[dict]) -> list[dict]:

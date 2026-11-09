@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Generic, TypeVar
 from uuid import uuid4
@@ -8,6 +8,15 @@ from uuid import uuid4
 from pydantic import BaseModel, Field
 
 T = TypeVar("T")
+
+
+def _utcnow() -> datetime:
+    """Naive-UTC timestamp. Replacement for the deprecated ``datetime.utcnow``.
+
+    Returns the same shape (tz-naive) so serialization / comparisons with
+    legacy stored strings keep working byte-for-byte.
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class Channel(str, Enum):
@@ -60,7 +69,7 @@ class SessionSnapshot(BaseModel):
     cwd: str
     last_turns: list[Turn]
     activity_signals: ActivitySignals | None = None
-    captured_at: datetime = Field(default_factory=datetime.utcnow)
+    captured_at: datetime = Field(default_factory=_utcnow)
 
 
 class Redaction(BaseModel):
@@ -99,7 +108,7 @@ class CommitReport(BaseModel):
     generated_summary: str
     open_questions: list[str] = Field(default_factory=list)
     confidence: float = 0.8
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
 
 
 class IncrementalSummary(BaseModel):
@@ -109,7 +118,7 @@ class IncrementalSummary(BaseModel):
     source_refs: list[str]
     text: str
     tags: list[str] = Field(default_factory=list)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
 
 
 class StandupBullets(BaseModel):
@@ -131,14 +140,14 @@ class PRDraft(BaseModel):
 class QuickNote(BaseModel):
     message: str
     context: str = ""  # optional freeform context (branch, repo, etc.)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
 
 
 class DraftPayload(BaseModel, Generic[T]):
     draft_id: str = Field(default_factory=lambda: str(uuid4()))
     artifact_type: str
     payload: T
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
     developer_id: str
 
     model_config = {"arbitrary_types_allowed": True}
@@ -150,7 +159,7 @@ class ApprovedPayload(BaseModel, Generic[T]):
     draft_id: str
     artifact_type: str
     payload: T
-    approved_at: datetime = Field(default_factory=datetime.utcnow)
+    approved_at: datetime = Field(default_factory=_utcnow)
     approval_source: ApprovalSource
     developer_id: str
     redaction_level: RedactionLevel = RedactionLevel.STANDARD
@@ -165,7 +174,7 @@ class SubscriberIdentity(BaseModel):
     channels: list[Channel] = Field(default_factory=list)
     token_value: str = ""
     revocation_counter: int = 0
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
     revoked_at: datetime | None = None
 
     @property
@@ -190,7 +199,7 @@ class ScopedTokenClaims(BaseModel):
     subscriber_id: str
     developer_id: str
     channels: list[Channel]
-    issued_at: datetime = Field(default_factory=datetime.utcnow)
+    issued_at: datetime = Field(default_factory=_utcnow)
     expires_at: datetime
     revocation_counter: int = 0
 
@@ -199,7 +208,7 @@ class ProbeRequest(BaseModel):
     request_id: str = Field(default_factory=lambda: str(uuid4()))
     subscriber_id: str
     repo_hint: str = ""
-    requested_at: datetime = Field(default_factory=datetime.utcnow)
+    requested_at: datetime = Field(default_factory=_utcnow)
 
 
 class CounterOffer(BaseModel):
@@ -219,7 +228,7 @@ class ProbeResponse(BaseModel):
     fallback_summary: str = ""
     staleness_seconds: int = 0
     redaction_level_applied: RedactionLevel = RedactionLevel.STANDARD
-    responded_at: datetime = Field(default_factory=datetime.utcnow)
+    responded_at: datetime = Field(default_factory=_utcnow)
     counter_offer: CounterOffer | None = None
 
 
@@ -237,7 +246,7 @@ class IntentBeacon(BaseModel):
     files_touched: list[str] = Field(default_factory=list)
     intent_hint: str = ""   # scrubbed one-liner summary of current work
     turn_count: int = 0     # how many turns in the active session
-    emitted_at: datetime = Field(default_factory=datetime.utcnow)
+    emitted_at: datetime = Field(default_factory=_utcnow)
 
 
 class CollisionCandidate(BaseModel):
@@ -249,7 +258,7 @@ class CollisionCandidate(BaseModel):
     intent_a: str = ""
     intent_b: str = ""
     jaccard: float = 0.0
-    detected_at: datetime = Field(default_factory=datetime.utcnow)
+    detected_at: datetime = Field(default_factory=_utcnow)
 
 
 class FrictionReport(BaseModel):
@@ -268,7 +277,7 @@ class FrictionReport(BaseModel):
     minutes_since_commit: int = 0
     hot_files: list[str] = Field(default_factory=list)
     summary: str = ""
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
 
 
 class InitiativeEvent(BaseModel):
@@ -324,7 +333,7 @@ class BugResolution(BaseModel):
     files_touched: list[str] = Field(default_factory=list)
     tools_used: list[str] = Field(default_factory=list)
     repo: str = ""
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
 
 
 class SemanticCollision(BaseModel):
@@ -350,7 +359,7 @@ class SemanticCollision(BaseModel):
     shared_terms: list[str] = Field(default_factory=list)   # TF-IDF-ish token overlap
     file_overlap: list[str] = Field(default_factory=list)   # files that appear in both
     severity: str = "medium"                                # "high" | "medium" | "low"
-    detected_at: datetime = Field(default_factory=datetime.utcnow)
+    detected_at: datetime = Field(default_factory=_utcnow)
 
 
 class GithubEvent(BaseModel):
@@ -372,7 +381,7 @@ class GithubEvent(BaseModel):
     commit_sha: str = ""
     summary: str = ""                          # deterministic one-liner, e.g. "Alice opened PR #42: …"
     raw_payload_excerpt: str = ""              # cleaned engineering text, ≤2KB (NOT raw JSON)
-    received_at: datetime = Field(default_factory=datetime.utcnow)
+    received_at: datetime = Field(default_factory=_utcnow)
     # Filled in by the reactive-followup task when a trigger event lands (CI
     # failure, review changes-requested). Describes the dev's live session
     # state at the moment the event was received — "Alice is actively editing
@@ -394,7 +403,7 @@ class DailyBrief(BaseModel):
     headline: str = ""
     developer_count: int = 0
     artifact_count: int = 0
-    generated_at: datetime = Field(default_factory=datetime.utcnow)
+    generated_at: datetime = Field(default_factory=_utcnow)
 
 
 class ChatTurn(BaseModel):
@@ -412,7 +421,7 @@ class ChatTurn(BaseModel):
     tool_name: str = ""
     tool_call_id: str = ""
     tool_input_json: str = ""
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
 
 
 class ChatConversation(BaseModel):
@@ -420,14 +429,14 @@ class ChatConversation(BaseModel):
     conversation_id: str = Field(default_factory=lambda: str(uuid4()))
     manager_token_hash: str
     title: str = ""
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    last_turn_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
+    last_turn_at: datetime = Field(default_factory=_utcnow)
     turn_count: int = 0
 
 
 class AuditEntry(BaseModel):
     entry_id: str = Field(default_factory=lambda: str(uuid4()))
-    ts: datetime = Field(default_factory=datetime.utcnow)
+    ts: datetime = Field(default_factory=_utcnow)
     kind: str
     developer_id: str
     destination: str | None = None

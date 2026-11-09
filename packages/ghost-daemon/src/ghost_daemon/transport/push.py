@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import logging
+import secrets
 from typing import TYPE_CHECKING
 
 import httpx
@@ -15,6 +16,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _TIMEOUT = 10.0
+
+
+def _new_trace_id() -> str:
+    """12 hex chars. Matches the replica's mint format so log scraping is
+    symmetric across the push → receive boundary. Called ``trace_id`` here
+    to stay semantically distinct from the probe-protocol ``request_id`` on
+    the replica side (different layer, different lifecycle)."""
+    return secrets.token_hex(6)
 
 
 def _body_signature(body: bytes, token_value: str) -> str:
@@ -36,11 +45,13 @@ async def push(
     """
     body = approved.model_dump_json().encode()
     sig = _body_signature(body, subscriber.token_value)
+    trace_id = _new_trace_id()
 
     headers = {
         "Authorization": f"Bearer {subscriber.token_value}",
         "X-Vantage-Developer-Id": developer_id,
         "X-Vantage-Signature": sig,
+        "X-Request-Id": trace_id,
         "Content-Type": "application/json",
     }
 
@@ -51,20 +62,25 @@ async def push(
             resp = await client.post(receive_url, content=body, headers=headers)
         if resp.is_success:
             logger.info(
-                "Pushed %s to subscriber %s (%s) — %d",
+                "Pushed %s to subscriber %s (%s) — %d [trace=%s]",
                 approved.approval_id,
                 subscriber.name,
                 subscriber.subscriber_id,
                 resp.status_code,
+                trace_id,
             )
             return True
         logger.warning(
-            "Push to subscriber %s failed: %d %s",
+            "Push to subscriber %s failed: %d %s [trace=%s]",
             subscriber.subscriber_id,
             resp.status_code,
             resp.text[:200],
+            trace_id,
         )
         return False
     except Exception as exc:
-        logger.warning("Push to subscriber %s error: %s", subscriber.subscriber_id, exc)
+        logger.warning(
+            "Push to subscriber %s error: %s [trace=%s]",
+            subscriber.subscriber_id, exc, trace_id,
+        )
         return False

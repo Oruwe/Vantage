@@ -215,7 +215,19 @@
   <a href="/" {% if active_page == 'drafts' %}class="active"{% endif %}>Drafts <span class="kbd">g d</span></a>
   <a href="/subscribers" {% if active_page == 'subscribers' %}class="active"{% endif %}>Subscribers</a>
   <a href="/audit" {% if active_page == 'audit' %}class="active"{% endif %}>Audit <span class="kbd">g a</span></a>
+  <a href="/privacy" {% if active_page == 'privacy' %}class="active"{% endif %}>Privacy <span class="kbd">g p</span></a>
+  <a href="/flow" {% if active_page == 'flow' %}class="active"{% endif %}>Flow <span class="kbd">g f</span></a>
   <span class="spacer"></span>
+
+  <!-- Collision heads-up pill: polled from every manager the dev pushes to -->
+  <span style="position:relative;margin-right:0.5rem">
+    <span id="coll-pill" class="pair-pill" data-state="none" style="cursor:pointer" onclick="toggleCollDrawer()">
+      <span class="pair-dot"></span>
+      <span id="coll-text">—</span>
+    </span>
+    <div id="coll-drawer" style="display:none;position:absolute;top:2.4rem;right:0;min-width:320px;max-width:420px;background:var(--sf2);border:1px solid var(--bd);border-radius:8px;padding:0.75rem;box-shadow:0 8px 32px rgba(0,0,0,.5);z-index:150;font-family:var(--mono);font-size:0.78rem"></div>
+  </span>
+
   <span style="position:relative">
     <span id="pair-pill" class="pair-pill" data-state="none">
       <span class="pair-dot"></span>
@@ -261,6 +273,53 @@ function escapeHTML(s) { return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp
 refreshPairing();
 setInterval(refreshPairing, 10000);
 
+/* ── Collision heads-up ────────────────────────────────────────── */
+async function refreshCollisions() {
+  try {
+    const r = await fetch('/api/collisions');
+    if (!r.ok) return;
+    const d = await r.json();
+    const pill = document.getElementById('coll-pill');
+    const txt  = document.getElementById('coll-text');
+    const dr   = document.getElementById('coll-drawer');
+    if (!pill) return;
+    const n = d.count || 0;
+    if (n === 0) {
+      pill.setAttribute('data-state', 'none');
+      txt.textContent = 'no collisions';
+      dr.innerHTML = '<div style="color:var(--tx3)">No overlapping work detected from your managers right now.</div>';
+      return;
+    }
+    pill.setAttribute('data-state', n >= 3 ? 'offline' : 'partial');
+    txt.textContent = `${n} collision${n === 1 ? '' : 's'}`;
+    dr.innerHTML = d.collisions.slice(0, 8).map(c => {
+      const files = (c.files || []).slice(0, 3).join(', ') || '(no shared files)';
+      const score = c.score ? ` · ${Math.round(c.score * 100)}%` : '';
+      return `<div style="padding:0.5rem 0;border-bottom:1px solid var(--bd)">
+        <div style="color:var(--tx)"><strong>${escapeHTML(c.other_developer_name || c.other_developer)}</strong>${score}</div>
+        <div style="color:var(--tx3);font-size:0.72rem;margin-top:2px">${escapeHTML(files)}</div>
+        <div style="color:var(--tx3);font-size:0.68rem;margin-top:2px">${escapeHTML(c.kind)} · via ${escapeHTML(c.source_subscriber)}</div>
+      </div>`;
+    }).join('') + (d.errors && d.errors.length ? `<div style="color:var(--am);font-size:0.68rem;margin-top:6px">${d.errors.length} subscriber(s) unreachable</div>` : '');
+  } catch (e) { /* keep last state */ }
+}
+function toggleCollDrawer() {
+  const dr = document.getElementById('coll-drawer');
+  if (!dr) return;
+  dr.style.display = dr.style.display === 'block' ? 'none' : 'block';
+}
+document.addEventListener('click', (e) => {
+  const dr = document.getElementById('coll-drawer');
+  const pill = document.getElementById('coll-pill');
+  if (!dr || !pill) return;
+  if (dr.style.display === 'block'
+      && !dr.contains(e.target) && !pill.contains(e.target)) {
+    dr.style.display = 'none';
+  }
+});
+refreshCollisions();
+setInterval(refreshCollisions, 90000);
+
 /* ── Global go-to chords (g d, g a) ─────────────────────── */
 let _gBuf = null, _gTimer = null;
 document.addEventListener('keydown', (e) => {
@@ -276,6 +335,8 @@ document.addEventListener('keydown', (e) => {
     if (e.key === 'd') { location.href = '/'; _gBuf = null; return; }
     if (e.key === 'a') { location.href = '/audit'; _gBuf = null; return; }
     if (e.key === 's') { location.href = '/subscribers'; _gBuf = null; return; }
+    if (e.key === 'p') { location.href = '/privacy'; _gBuf = null; return; }
+    if (e.key === 'f') { location.href = '/flow'; _gBuf = null; return; }
     _gBuf = null;
   }
 });
