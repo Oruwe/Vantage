@@ -24,6 +24,7 @@ from shadow_replica.models.embedder import Embedder
 from shadow_replica.observability import (
     RequestIdLogFilter, RequestIdMiddleware, maybe_setup_otel,
 )
+from shadow_replica.observability.http_metrics import MetricsMiddleware
 from shadow_replica.storage.received_store import ReceivedStore
 from shadow_replica.wiretap.bus import WiretapBus
 
@@ -112,6 +113,11 @@ def build_app(cfg: ReplicaConfig) -> FastAPI:
     manager_agent = build_manager_agent(tool_ctx, chat_memory, cfg, bus=bus)
 
     app = FastAPI(title="Vantage Shadow Replica", docs_url="/docs", redoc_url=None)
+    # Metrics middleware is added BEFORE RequestIdMiddleware so it becomes
+    # the inner middleware — its ``dispatch`` sees the final status_code
+    # emitted by downstream handlers. RequestIdMiddleware then wraps it so
+    # its own 4xx/5xx would also be counted if it ever started rejecting.
+    app.add_middleware(MetricsMiddleware)
     app.add_middleware(RequestIdMiddleware)
 
     # Opt-in OTel wiring. Registering the OTel middleware AFTER our own means
