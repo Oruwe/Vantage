@@ -58,11 +58,14 @@ def use_trace_id(trace_id: str) -> Iterator[str]:
 class RequestIdMiddleware(BaseHTTPMiddleware):
     """Attach ``X-Request-Id`` to every request + response.
 
-    Behavior:
-      - If the incoming request carries a sane ``X-Request-Id``, reuse it.
-      - Otherwise mint a fresh one.
-      - Bind it to the request-scoped trace-id ``ContextVar`` for the
-        duration of the handler, and echo it on the response.
+    Resolution order for the id:
+      1. Sane client-supplied ``X-Request-Id`` header → reuse.
+      2. Active OTel span → derive from its trace-id (so logs and spans
+         share the same prefix; no translation table needed).
+      3. Mint a fresh one.
+
+    The id is bound to the request-scoped ContextVar for the duration of
+    the handler and echoed back on the response.
 
     "Sane" means: non-empty, ≤ 128 chars, only safe ASCII (letters, digits,
     ``-``, ``_``). Reject anything else and mint a replacement — we don't
@@ -73,7 +76,10 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next):  # type: ignore[override]
         incoming = request.headers.get(_REQUEST_ID_HEADER, "").strip()
-        tid = incoming if self._is_sane(incoming) else new_trace_id()
+        if self._is_sane(incoming):
+            tid = incoming
+        else:
+            tid = self._otel_trace_id() or new_trace_id()
 
         token = _trace_id_var.set(tid)
         try:
@@ -93,6 +99,17 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
         if len(value) > _TRACE_ID_MAX_LEN:
             return False
         return all(c in cls._SAFE_CHARS for c in value)
+
+    @staticmethod
+    def _otel_trace_id() -> str:
+        """Return the active OTel span's trace-id prefix, or empty if OTel
+        isn't configured. Lazy import so the middleware doesn't pull the
+        dependency in when OTel isn't installed."""
+        try:
+            from shadow_replica.observability.otel import otel_trace_id_hex
+        except Exception:
+            return ""
+        return otel_trace_id_hex()
 
 
 class RequestIdLogFilter(logging.Filter):

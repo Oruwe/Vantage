@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from ghost_daemon.observability import use_trace_id
 from vantage.schemas import ProbeRequest
 
 if TYPE_CHECKING:
@@ -153,36 +154,50 @@ class WSClient:
             await ws.send(json.dumps({"type": "pong"}))
         elif msg_type == "probe_request":
             data = msg.get("data", {})
-            try:
-                request = ProbeRequest(**data)
-                response = await self._probe_agent.run(request)
-                await ws.send(json.dumps({
-                    "type": "probe_response",
-                    "data": response.model_dump(mode="json"),
-                }))
-            except Exception as exc:
-                logger.warning("Probe handling failed: %s", exc)
+            # Enter the inbound trace scope *before* building the request so any
+            # validation error is also logged with the correlation id.
+            inbound_trace = data.get("trace_id", "") if isinstance(data, dict) else ""
+            with use_trace_id(inbound_trace) as trace_id:
+                try:
+                    request = ProbeRequest(**data)
+                    # Ensure the ProbeRequest carries the (possibly minted)
+                    # trace_id — _is_sane may have replaced a malformed value.
+                    request.trace_id = trace_id
+                    response = await self._probe_agent.run(request)
+                    # Echo the id back so the replica's response path logs it.
+                    if not response.trace_id:
+                        response.trace_id = trace_id
+                    await ws.send(json.dumps({
+                        "type": "probe_response",
+                        "data": response.model_dump(mode="json"),
+                    }))
+                except Exception as exc:
+                    logger.warning("Probe handling failed: %s", exc)
         elif msg_type == "discovery_request" and self._discovery_agent is not None:
             data = msg.get("data", {})
             request_id = data.get("request_id", "")
             prompt = data.get("prompt", "")
-            try:
-                answer = await self._discovery_agent.answer(
-                    prompt, self._subscriber.subscriber_id,
-                )
-                answer["request_id"] = request_id
-                await ws.send(json.dumps({"type": "discovery_response", "data": answer}))
-            except Exception as exc:
-                logger.warning("Discovery handling failed: %s", exc)
-                await ws.send(json.dumps({
-                    "type": "discovery_response",
-                    "data": {
-                        "request_id": request_id,
-                        "developer_id": self._developer_id,
-                        "policy_decision": "offline",
-                        "answer": f"error: {exc}",
-                    },
-                }))
+            inbound_trace = data.get("trace_id", "") if isinstance(data, dict) else ""
+            with use_trace_id(inbound_trace) as trace_id:
+                try:
+                    answer = await self._discovery_agent.answer(
+                        prompt, self._subscriber.subscriber_id,
+                    )
+                    answer["request_id"] = request_id
+                    answer["trace_id"] = trace_id
+                    await ws.send(json.dumps({"type": "discovery_response", "data": answer}))
+                except Exception as exc:
+                    logger.warning("Discovery handling failed: %s", exc)
+                    await ws.send(json.dumps({
+                        "type": "discovery_response",
+                        "data": {
+                            "request_id": request_id,
+                            "trace_id": trace_id,
+                            "developer_id": self._developer_id,
+                            "policy_decision": "offline",
+                            "answer": f"error: {exc}",
+                        },
+                    }))
         elif msg_type == "collision_alert":
             # Replica is telling us two ghosts overlap. For v1 we just log it;
             # a future upgrade can surface this as a toast in the ghost UI.

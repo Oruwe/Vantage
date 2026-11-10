@@ -3,18 +3,23 @@ import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
+from ghost_daemon.observability import RequestIdLogFilter
+
 
 def setup_logging(log_dir: Path, level: str = "INFO", *, daemon_mode: bool = False) -> None:
     log_dir.mkdir(parents=True, exist_ok=True)
     log_file = log_dir / "ghost.log"
 
     fmt = logging.Formatter(
-        "%(asctime)s %(levelname)-8s %(name)s %(message)s",
+        "%(asctime)s %(levelname)-8s %(name)s [trace=%(trace_id)s] %(message)s",
         datefmt="%Y-%m-%dT%H:%M:%S",
     )
 
     root = logging.getLogger()
     root.setLevel(getattr(logging, level.upper(), logging.INFO))
+
+    if not any(isinstance(f, RequestIdLogFilter) for f in root.filters):
+        root.addFilter(RequestIdLogFilter())
 
     file_handler = RotatingFileHandler(
         log_file, maxBytes=10 * 1024 * 1024, backupCount=5, encoding="utf-8"

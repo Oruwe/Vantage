@@ -209,6 +209,12 @@ class ProbeRequest(BaseModel):
     subscriber_id: str
     repo_hint: str = ""
     requested_at: datetime = Field(default_factory=_utcnow)
+    # Correlation id for log grepping across replica→ghost→replica.
+    # Distinct from `request_id` (which is the probe-protocol identifier used
+    # to match a response to its request); `trace_id` is the HTTP-side
+    # ``X-Request-Id`` carried into the WS channel so a single value stitches
+    # the whole flow. Empty = no outer trace; ws_hub will mint one on send.
+    trace_id: str = ""
 
 
 class CounterOffer(BaseModel):
@@ -230,6 +236,9 @@ class ProbeResponse(BaseModel):
     redaction_level_applied: RedactionLevel = RedactionLevel.STANDARD
     responded_at: datetime = Field(default_factory=_utcnow)
     counter_offer: CounterOffer | None = None
+    # Echoed from the request so the replica can keep the correlation id in
+    # its response-handling logs even after the WS round-trip.
+    trace_id: str = ""
 
 
 class IntentBeacon(BaseModel):

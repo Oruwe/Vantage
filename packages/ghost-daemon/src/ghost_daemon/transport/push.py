@@ -3,11 +3,11 @@ from __future__ import annotations
 import hashlib
 import hmac
 import logging
-import secrets
 from typing import TYPE_CHECKING
 
 import httpx
 
+from ghost_daemon.observability import current_trace_id, new_trace_id, use_trace_id
 from vantage.schemas import ApprovedPayload, SubscriberIdentity
 
 if TYPE_CHECKING:
@@ -16,14 +16,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _TIMEOUT = 10.0
-
-
-def _new_trace_id() -> str:
-    """12 hex chars. Matches the replica's mint format so log scraping is
-    symmetric across the push → receive boundary. Called ``trace_id`` here
-    to stay semantically distinct from the probe-protocol ``request_id`` on
-    the replica side (different layer, different lifecycle)."""
-    return secrets.token_hex(6)
 
 
 def _body_signature(body: bytes, token_value: str) -> str:
@@ -45,7 +37,11 @@ async def push(
     """
     body = approved.model_dump_json().encode()
     sig = _body_signature(body, subscriber.token_value)
-    trace_id = _new_trace_id()
+
+    # Reuse an inherited trace_id (e.g. from an inbound UI request) when present;
+    # otherwise mint a fresh one so the push still appears correlated in logs.
+    inherited = current_trace_id()
+    trace_id = inherited if inherited and inherited != "-" else new_trace_id()
 
     headers = {
         "Authorization": f"Bearer {subscriber.token_value}",
@@ -57,30 +53,29 @@ async def push(
 
     receive_url = subscriber.receive_url.rstrip("/") + "/v1/receive"
 
-    try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-            resp = await client.post(receive_url, content=body, headers=headers)
-        if resp.is_success:
-            logger.info(
-                "Pushed %s to subscriber %s (%s) — %d [trace=%s]",
-                approved.approval_id,
-                subscriber.name,
+    with use_trace_id(trace_id):
+        try:
+            async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+                resp = await client.post(receive_url, content=body, headers=headers)
+            if resp.is_success:
+                logger.info(
+                    "Pushed %s to subscriber %s (%s) — %d",
+                    approved.approval_id,
+                    subscriber.name,
+                    subscriber.subscriber_id,
+                    resp.status_code,
+                )
+                return True
+            logger.warning(
+                "Push to subscriber %s failed: %d %s",
                 subscriber.subscriber_id,
                 resp.status_code,
-                trace_id,
+                resp.text[:200],
             )
-            return True
-        logger.warning(
-            "Push to subscriber %s failed: %d %s [trace=%s]",
-            subscriber.subscriber_id,
-            resp.status_code,
-            resp.text[:200],
-            trace_id,
-        )
-        return False
-    except Exception as exc:
-        logger.warning(
-            "Push to subscriber %s error: %s [trace=%s]",
-            subscriber.subscriber_id, exc, trace_id,
-        )
-        return False
+            return False
+        except Exception as exc:
+            logger.warning(
+                "Push to subscriber %s error: %s",
+                subscriber.subscriber_id, exc,
+            )
+            return False

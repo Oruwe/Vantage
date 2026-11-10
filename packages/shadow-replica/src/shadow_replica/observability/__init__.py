@@ -14,6 +14,11 @@ semantically distinct — grep ``trace_id`` for HTTP, ``request_id`` for probes.
 """
 from __future__ import annotations
 
+from shadow_replica.observability.otel import (
+    maybe_setup_otel,
+    otel_enabled,
+    otel_trace_id_hex,
+)
 from shadow_replica.observability.trace import (
     RequestIdLogFilter,
     RequestIdMiddleware,
@@ -26,6 +31,9 @@ __all__ = [
     "RequestIdLogFilter",
     "RequestIdMiddleware",
     "current_trace_id",
+    "maybe_setup_otel",
     "new_trace_id",
+    "otel_enabled",
+    "otel_trace_id_hex",
     "use_trace_id",
 ]

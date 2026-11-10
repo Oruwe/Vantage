@@ -21,7 +21,9 @@ from shadow_replica.collision.detector import CollisionDetector
 from shadow_replica.config import ReplicaConfig
 from shadow_replica.connections.ws_hub import WSHub
 from shadow_replica.models.embedder import Embedder
-from shadow_replica.observability import RequestIdLogFilter, RequestIdMiddleware
+from shadow_replica.observability import (
+    RequestIdLogFilter, RequestIdMiddleware, maybe_setup_otel,
+)
 from shadow_replica.storage.received_store import ReceivedStore
 from shadow_replica.wiretap.bus import WiretapBus
 
@@ -111,6 +113,13 @@ def build_app(cfg: ReplicaConfig) -> FastAPI:
 
     app = FastAPI(title="Vantage Shadow Replica", docs_url="/docs", redoc_url=None)
     app.add_middleware(RequestIdMiddleware)
+
+    # Opt-in OTel wiring. Registering the OTel middleware AFTER our own means
+    # OTel's span wraps our middleware — so when RequestIdMiddleware consults
+    # ``otel_trace_id_hex()`` it sees the just-opened span. Flag-gated and
+    # dep-optional: no-op when ``VANTAGE_OTEL_ENABLED`` is unset or the OTel
+    # packages aren't installed.
+    maybe_setup_otel(app)
 
     # Make every log record carry the current request-id so operators can
     # correlate a push → receive → notify → agent-tool-call chain. Installed

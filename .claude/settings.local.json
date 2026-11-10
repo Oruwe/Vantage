@@ -16,7 +16,14 @@
       "Bash(findstr /i python)",
       "Read(//c/Users/trive/AppData/Local/Temp/claude/C--oruwe-Ganni-Vantage/d083f11e-c42d-4fc5-a053-ddf74cec387e/tasks/**)",
       "Bash(findstr /i voice employer)",
-      "Bash(uv sync *)"
+      "Bash(uv sync *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git push *)",
+      "Bash(git reset *)",
+      "Bash(git fetch *)",
+      "Bash(gh api *)",
+      "Bash(gh run *)"
     ]
   }
 }

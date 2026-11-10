@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 from fastapi import WebSocket
 
 from shadow_replica.metrics import ws_connections_active
+from shadow_replica.observability import current_trace_id, new_trace_id
 from vantage.a2a import A2AAgentRef, A2AEnvelope, A2AIntent
 from vantage.schemas import (
     ActivitySignals, FrictionReport, IntentBeacon,
@@ -143,6 +144,14 @@ class WSHub:
         timeout: float = _PROBE_TIMEOUT,
     ) -> ProbeResponse | None:
         """Forward a probe request to the best live connection; return None on timeout/offline."""
+        # Stitch the WS hop into the HTTP trace: if the caller is inside an
+        # HTTP request context inherit that trace_id, otherwise mint one so
+        # the probe still correlates in logs. The request payload carries
+        # it to the ghost side so both log streams share the same value.
+        if not request.trace_id:
+            inherited = current_trace_id()
+            request.trace_id = inherited if inherited and inherited != "-" else new_trace_id()
+
         dev_conns = self._connections.get(developer_id, {})
         dev_ref = A2AAgentRef(kind="ghost-daemon", developer_id=developer_id, label=developer_id)
         req_env = A2AEnvelope(
@@ -155,6 +164,7 @@ class WSHub:
                 "request_id": request.request_id,
                 "subscriber_id": request.subscriber_id,
                 "repo_hint": request.repo_hint,
+                "trace_id": request.trace_id,
             },
         )
         self._emit(req_env)
@@ -344,6 +354,10 @@ class WSHub:
                 return {"developer_id": dev_id, "status": "offline", "answer": ""}
             ws = self._pick(dev_conns, "")
             request_id = f"{session_id}:{dev_id}"
+            # Thread the HTTP correlation id (or a freshly minted fallback)
+            # through the WS hop so ghost-side discovery logs stay linkable.
+            inherited = current_trace_id()
+            disco_trace = inherited if inherited and inherited != "-" else new_trace_id()
             loop = asyncio.get_running_loop()
             fut: asyncio.Future[dict] = loop.create_future()
             self._pending_disco[request_id] = fut
@@ -351,7 +365,11 @@ class WSHub:
             try:
                 await ws.send_text(json.dumps({
                     "type": "discovery_request",
-                    "data": {"request_id": request_id, "prompt": prompt},
+                    "data": {
+                        "request_id": request_id,
+                        "trace_id": disco_trace,
+                        "prompt": prompt,
+                    },
                 }))
                 data = await asyncio.wait_for(fut, timeout=timeout)
             except asyncio.TimeoutError:
