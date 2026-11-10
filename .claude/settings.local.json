@@ -25,7 +25,8 @@
       "Bash(gh api *)",
       "Bash(gh run *)",
       "PowerShell(git log -1 --stat --no-color HEAD 2>&1 | Select-Object -First 30; \"----\"; git log -1 --stat --no-color HEAD~1 2>&1 | Select-Object -First 30)",
-      "PowerShell(\\(Get-Content C:\\\\oruwe\\\\Ganni\\\\Vantage\\\\packages\\\\shadow-replica\\\\src\\\\shadow_replica\\\\static\\\\index.html | Measure-Object -Line\\).Lines)"
+      "PowerShell(\\(Get-Content C:\\\\oruwe\\\\Ganni\\\\Vantage\\\\packages\\\\shadow-replica\\\\src\\\\shadow_replica\\\\static\\\\index.html | Measure-Object -Line\\).Lines)",
+      "PowerShell(gh run *)"
     ]
   }
 }
