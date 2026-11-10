@@ -136,7 +136,7 @@ The static SPA (`static/index.html`) is a single-file vanilla JS app served at `
 
 ### Auth model
 
-- **Ghost → Replica push:** HMAC-SHA256 signature over `developer_id + ":" + payload_json` using the per-subscriber bearer token (`vsub_...`). Verified in `auth/token_verify.py`.
+- **Ghost → Replica push:** HMAC-SHA256 over the raw request body, keyed by the per-subscriber bearer token (`vsub_...`), sent as `X-Vantage-Signature: sha256=<hex>`. Required on `/v1/receive` (built in `ghost_daemon/transport/push.py:_body_signature`, verified in `shadow_replica/auth/token_verify.py` with `require_signature=True`). The signing key is the same `vsub_` token that travels in the `Authorization` header, so the signature is an integrity check on the body — not a second secret. TLS is what keeps the token off the wire for an eavesdropper.
 - **Daemon → Replica WebSocket:** Bearer token in `Authorization` header; matched against `TrustedDev.token_value`.
 - **Manager → UI API:** Bearer token (`vsm_...`) compared with `hmac.compare_digest` against `cfg.manager_token`.
 

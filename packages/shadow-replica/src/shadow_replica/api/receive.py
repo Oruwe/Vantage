@@ -35,7 +35,7 @@ def make_router(
     @r.post("/v1/receive")
     async def receive(request: Request):
         body = await request.body()
-        dev = verify_request(request, body, trusted_devs)
+        dev = verify_request(request, body, trusted_devs, require_signature=True)
 
         try:
             data = json.loads(body)
@@ -51,6 +51,17 @@ def make_router(
 
         if not approval_id:
             return JSONResponse({"error": "missing approval_id"}, status_code=400)
+
+        if store.exists(approval_id):
+            logger.info(
+                "Duplicate push %s from developer %s — skipping save and notifications",
+                approval_id,
+                dev.developer_id,
+            )
+            return JSONResponse(
+                {"status": "duplicate", "approval_id": approval_id},
+                status_code=200,
+            )
 
         payload_json = json.dumps(payload)
         await store.save_async(

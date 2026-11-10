@@ -2028,6 +2028,7 @@ name = "vantage"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "employer-voice" },
     { name = "ghost-daemon" },
     { name = "shadow-replica" },
 ]
@@ -2041,6 +2042,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "employer-voice", editable = "packages/employer-voice" },
     { name = "ghost-daemon", editable = "packages/ghost-daemon" },
     { name = "shadow-replica", editable = "packages/shadow-replica" },
 ]

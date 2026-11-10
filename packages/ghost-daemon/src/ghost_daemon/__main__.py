@@ -199,6 +199,25 @@ def status():
                 typer.echo(f"  {d}  (not found)")
 
 
+@app.command("stats")
+def stats_cmd(
+    weeks: Annotated[int, typer.Option("--weeks", "-w", min=1, max=52,
+                                        help="Rolling weeks to include (default 4)")] = 4,
+    as_json: Annotated[bool, typer.Option("--json", help="Emit JSON instead of markdown")] = False,
+):
+    """Show rolling weekly stats: drafts, approval/rejection, edit-rate, scrubber hits.
+
+    Prints only counts and rates — never artifact content. All data is read
+    from the local SQLite store.
+    """
+    from ghost_daemon import config as _cfg_mod
+    from ghost_daemon.insights.stats import compute_report, render_markdown, render_json
+
+    cfg = _cfg_mod.load()
+    report = compute_report(sqlite_path=cfg.sqlite_path, weeks=weeks)
+    typer.echo(render_json(report) if as_json else render_markdown(report))
+
+
 def _age_label(iso_ts: str | None) -> str:
     if not iso_ts:
         return "unknown"
@@ -231,6 +250,22 @@ def run():
 
     typer.echo(f"Starting Vantage daemon  →  http://{cfg.ui.bind_address}:{cfg.ui.port}")
     asyncio.run(daemon.run_forever())
+
+
+@app.command("demo")
+def demo(
+    home: Annotated[str, typer.Option("--home", help="Where to put demo state. Default: a fresh tempdir.")] = "",
+    ghost_port: Annotated[int, typer.Option("--ghost-port")] = 7474,
+    replica_port: Annotated[int, typer.Option("--replica-port")] = 7475,
+    keep: Annotated[bool, typer.Option("--keep/--fresh", help="Reuse existing demo state instead of wiping it.")] = False,
+):
+    """Offline demo: seed configs + sessions, pair ghost ↔ replica, run both.
+
+    No internet, no Qdrant, no Ollama, no API keys. The seeded session
+    contains a planted fake AWS key so the X-Ray view has something to show.
+    """
+    from ghost_daemon.demo_mode import run_demo
+    run_demo(home=home, ghost_port=ghost_port, replica_port=replica_port, clean=not keep)
 
 
 @app.command()

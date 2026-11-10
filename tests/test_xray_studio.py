@@ -31,6 +31,10 @@ def daemon_app(tmp_path, monkeypatch):
 
     from ghost_daemon.config import load as load_cfg
     cfg = load_cfg()
+    # Drop the LLM — the daemon boots with the null provider and no API key
+    # is required. Any test that actually exercises a generation path has to
+    # supply its own provider via monkeypatching.
+    cfg.llm.provider = ""
     cfg.state_dir.mkdir(parents=True, exist_ok=True)
     cfg.audit_dir.mkdir(parents=True, exist_ok=True)
 

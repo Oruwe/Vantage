@@ -47,10 +47,11 @@
 {% else %}
 <div class="empty">
   <div style="font-size:2.5rem;opacity:0.3;margin-bottom:0.5rem">⟡</div>
-  <div style="font-size:0.95rem;color:var(--tx2);margin-bottom:0.5rem">All clear</div>
+  <div style="font-size:0.95rem;color:var(--tx2);margin-bottom:0.5rem">Nothing waiting for you</div>
   <div style="font-size:0.85rem;line-height:1.5">
-    No pending drafts. Run <code>vantage-ghost digest</code>, <code>vantage-ghost standup</code>,
-    or <code>vantage-ghost pr-draft</code> to generate one.
+    Drafts the agents write will land here for you to approve.
+    To try it now, run <code>vantage-ghost note "testing the pipeline"</code> in a terminal —
+    that pushes an instant note. Or generate a summary with <code>vantage-ghost digest</code>.
   </div>
 </div>
 {% endif %}

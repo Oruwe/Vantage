@@ -1,0 +1,38 @@
+# Byte-compiled / optimized
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtualenvs
+.venv/
+venv/
+env/
+
+# Test / lint caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Local state produced by Vantage at runtime
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Secrets / local config
+.env
+.env.local
+
+# OS / IDE junk
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

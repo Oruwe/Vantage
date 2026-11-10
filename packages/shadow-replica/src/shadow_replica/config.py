@@ -11,9 +11,12 @@ from shadow_replica.notify.notifier import NotificationConfig
 
 
 def _replica_config_dir() -> Path:
+    import os as _os
+    override = _os.environ.get("VANTAGE_REPLICA_HOME", "").strip()
+    if override:
+        return Path(override).expanduser()
     if sys.platform == "win32":
-        import os
-        base = Path(os.environ.get("APPDATA", Path.home()))
+        base = Path(_os.environ.get("APPDATA", Path.home()))
         return base / "VantageReplica"
     return Path.home() / ".vantage-replica"
 

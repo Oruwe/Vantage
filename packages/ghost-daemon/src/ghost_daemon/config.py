@@ -9,6 +9,9 @@ from pathlib import Path
 
 
 def _vantage_dir() -> Path:
+    override = os.environ.get("VANTAGE_HOME", "").strip()
+    if override:
+        return Path(override).expanduser()
     if sys.platform == "win32":
         base = Path(os.environ.get("APPDATA", Path.home()))
         return base / "Vantage"
