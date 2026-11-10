@@ -15,6 +15,7 @@ from ghost_daemon.approval.gate import ApprovalGate
 from ghost_daemon.audit.log import AuditLog
 from ghost_daemon.storage.sqlite_store import SQLiteStore
 from ghost_daemon.storage.qdrant_store import QdrantStore
+from ghost_daemon.ui.local_guard import install_local_guard
 from vantage.schemas import ApprovalSource, Channel
 
 if TYPE_CHECKING:
@@ -253,6 +254,7 @@ def build_app(
     collisions: "CollisionPoller | None" = None,
 ) -> FastAPI:
     app = FastAPI(title="Vantage", docs_url=None, redoc_url=None)
+    install_local_guard(app, cfg.ui.bind_address, cfg.ui.allowed_hosts)
 
     @app.exception_handler(Exception)
     async def _debug_handler(request: Request, exc: Exception):
