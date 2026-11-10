@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
+
+from shadow_replica.metrics import qdrant_op_duration_seconds
 
 if TYPE_CHECKING:
     from shadow_replica.models.embedder import Embedder
@@ -168,10 +171,20 @@ class ReceivedStore:
             "approved_at": row.approved_at,
             "received_at": row.received_at,
         }
-        self._client.upsert(  # type: ignore[union-attr]
-            collection_name=_COLLECTION,
-            points=[PointStruct(id=point_id, vector=_fit(vector), payload=payload)],
-        )
+        t0 = time.monotonic()
+        try:
+            self._client.upsert(  # type: ignore[union-attr]
+                collection_name=_COLLECTION,
+                points=[PointStruct(id=point_id, vector=_fit(vector), payload=payload)],
+            )
+            qdrant_op_duration_seconds.labels(op="upsert", outcome="ok").observe(
+                time.monotonic() - t0,
+            )
+        except Exception:
+            qdrant_op_duration_seconds.labels(op="upsert", outcome="error").observe(
+                time.monotonic() - t0,
+            )
+            raise
 
     async def _embed_row(self, row: ReceivedArtifactRow) -> list[float]:
         if self._embedder is None:
@@ -291,6 +304,7 @@ class ReceivedStore:
         if not self._ensure_client() or self._embedder is None:
             return []
 
+        t0 = time.monotonic()
         try:
             from qdrant_client.models import Filter, FieldCondition, MatchValue
 
@@ -318,8 +332,14 @@ class ReceivedStore:
                 except Exception:
                     p["payload"] = {}
                 results.append(p)
+            qdrant_op_duration_seconds.labels(op="search", outcome="ok").observe(
+                time.monotonic() - t0,
+            )
             return results
         except Exception as exc:
+            qdrant_op_duration_seconds.labels(op="search", outcome="error").observe(
+                time.monotonic() - t0,
+            )
             logger.warning("Qdrant semantic_search failed: %s", exc)
             return []
 

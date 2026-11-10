@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import logging
+import time
+
+from shadow_replica.metrics import embedder_duration_seconds
 
 logger = logging.getLogger(__name__)
 
@@ -30,12 +33,24 @@ class Embedder:
     async def embed(self, text: str) -> list[float]:
         """Return a 768-dim vector for text. Returns zeros if backend unavailable."""
         if self._available is False:
+            embedder_duration_seconds.labels(
+                backend=self._provider, outcome="disabled",
+            ).observe(0.0)
             return [0.0] * _VECTOR_SIZE
+        t0 = time.monotonic()
         try:
             if self._provider == "ollama":
-                return await self._ollama_embed(text)
-            return await self._openai_embed(text)
+                vec = await self._ollama_embed(text)
+            else:
+                vec = await self._openai_embed(text)
+            embedder_duration_seconds.labels(
+                backend=self._provider, outcome="ok",
+            ).observe(time.monotonic() - t0)
+            return vec
         except Exception as exc:
+            embedder_duration_seconds.labels(
+                backend=self._provider, outcome="error",
+            ).observe(time.monotonic() - t0)
             if self._available is None:
                 logger.warning("Embedder unavailable (%s) — semantic search disabled", exc)
             self._available = False

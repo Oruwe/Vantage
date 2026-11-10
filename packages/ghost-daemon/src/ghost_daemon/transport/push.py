@@ -3,10 +3,12 @@ from __future__ import annotations
 import hashlib
 import hmac
 import logging
+import time
 from typing import TYPE_CHECKING
 
 import httpx
 
+from ghost_daemon.metrics import ghost_push_duration_seconds, ghost_pushes_total
 from ghost_daemon.observability import current_trace_id, new_trace_id, use_trace_id
 from vantage.schemas import ApprovedPayload, SubscriberIdentity
 
@@ -53,11 +55,15 @@ async def push(
 
     receive_url = subscriber.receive_url.rstrip("/") + "/v1/receive"
 
+    sub_label = subscriber.subscriber_id
     with use_trace_id(trace_id):
+        t0 = time.monotonic()
+        outcome = "error"
         try:
             async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
                 resp = await client.post(receive_url, content=body, headers=headers)
             if resp.is_success:
+                outcome = "ok"
                 logger.info(
                     "Pushed %s to subscriber %s (%s) — %d",
                     approved.approval_id,
@@ -66,6 +72,7 @@ async def push(
                     resp.status_code,
                 )
                 return True
+            outcome = f"{resp.status_code // 100}xx"
             logger.warning(
                 "Push to subscriber %s failed: %d %s",
                 subscriber.subscriber_id,
@@ -73,9 +80,23 @@ async def push(
                 resp.text[:200],
             )
             return False
+        except httpx.TimeoutException as exc:
+            outcome = "timeout"
+            logger.warning(
+                "Push to subscriber %s timed out: %s",
+                subscriber.subscriber_id, exc,
+            )
+            return False
         except Exception as exc:
+            outcome = "error"
             logger.warning(
                 "Push to subscriber %s error: %s",
                 subscriber.subscriber_id, exc,
             )
             return False
+        finally:
+            elapsed = time.monotonic() - t0
+            ghost_push_duration_seconds.labels(
+                subscriber=sub_label, outcome=outcome,
+            ).observe(elapsed)
+            ghost_pushes_total.labels(subscriber=sub_label, outcome=outcome).inc()

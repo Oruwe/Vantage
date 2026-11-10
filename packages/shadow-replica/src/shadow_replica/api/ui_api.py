@@ -71,6 +71,18 @@ def make_ui_router(
     # `bus` accepted so manager-initiated probes/queries can emit envelopes.
     r = APIRouter(prefix="/ui/api")
 
+    @r.get("/perf")
+    async def get_perf(request: Request):
+        """At-a-glance performance snapshot (p50/p95/p99 across key histograms).
+
+        Manager-token gated to match the rest of /ui/api. Backed by the live
+        prometheus_client registry — same numbers Prometheus would scrape,
+        just pre-aggregated into one JSON response for the dashboard card.
+        """
+        _require_manager(request, cfg.manager_token)
+        from shadow_replica.observability.perf import build_perf_summary
+        return JSONResponse(build_perf_summary())
+
     @r.get("/status")
     async def get_status(request: Request):
         _require_manager(request, cfg.manager_token)

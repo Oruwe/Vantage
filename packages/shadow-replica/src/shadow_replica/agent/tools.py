@@ -8,8 +8,13 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, TYPE_CHECKING
+
+from shadow_replica.metrics import (
+    agent_tool_call_duration_seconds, agent_tool_calls_total,
+)
 
 if TYPE_CHECKING:
     from shadow_replica.config import ReplicaConfig
@@ -694,11 +699,22 @@ async def invoke(ctx: ToolContext, name: str, args: dict) -> Any:
     """Dispatch a tool call. Returns a JSON-serializable value or an error dict."""
     for t in _TOOL_DEFS:
         if t.name == name:
+            t0 = time.monotonic()
             try:
-                return await t.handler(ctx, args or {})
+                result = await t.handler(ctx, args or {})
+                agent_tool_calls_total.labels(tool_name=name, outcome="ok").inc()
+                agent_tool_call_duration_seconds.labels(
+                    tool_name=name, outcome="ok",
+                ).observe(time.monotonic() - t0)
+                return result
             except Exception as exc:
+                agent_tool_calls_total.labels(tool_name=name, outcome="error").inc()
+                agent_tool_call_duration_seconds.labels(
+                    tool_name=name, outcome="error",
+                ).observe(time.monotonic() - t0)
                 logger.warning("Tool %s failed: %s", name, exc)
                 return {"error": f"tool {name} failed: {exc}"}
+    agent_tool_calls_total.labels(tool_name=name, outcome="unknown").inc()
     return {"error": f"unknown tool: {name}"}
 
 

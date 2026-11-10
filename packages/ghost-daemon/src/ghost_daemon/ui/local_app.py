@@ -264,6 +264,18 @@ def build_app(
             status_code=500,
         )
 
+    @app.get("/metrics", include_in_schema=False)
+    async def metrics():
+        """Prometheus scrape endpoint. Same contract as the replica — a
+        single process-wide registry exposed over plain text."""
+        from fastapi.responses import Response
+        from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+
+        # Touch the ghost metrics module so its series are registered even
+        # if no code path has imported it yet. Idempotent.
+        import ghost_daemon.metrics  # noqa: F401
+        return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request):
         pending = gate.list_pending()

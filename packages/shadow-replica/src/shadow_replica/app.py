@@ -34,23 +34,69 @@ logger = logging.getLogger(__name__)
 
 
 class _LLMWrapper:
-    """Thin async LLM wrapper exposing a uniform complete() interface."""
+    """Thin async LLM wrapper exposing a uniform complete() interface.
 
-    def __init__(self, client, model: str, is_anthropic: bool = False) -> None:
+    Instrumented with the ``vantage_llm_*`` series — every call lands a
+    latency sample, a per-outcome counter, and (where the SDK exposes it)
+    an input/output token tally. The labels keep provider+model+operation
+    low-cardinality so Grafana groupings stay cheap.
+    """
+
+    def __init__(self, client, model: str, is_anthropic: bool = False, provider: str = "") -> None:
         self._client = client
         self._model = model
         self._is_anthropic = is_anthropic
+        self._provider = provider or ("anthropic" if is_anthropic else "openai_compat")
 
     async def complete(self, messages: list[dict], max_tokens: int = 500) -> str:
-        if self._is_anthropic:
-            resp = await self._client.messages.create(
-                model=self._model, max_tokens=max_tokens, messages=messages
-            )
-            return resp.content[0].text
-        resp = await self._client.chat.completions.create(
-            model=self._model, messages=messages, max_tokens=max_tokens
+        import time
+        from shadow_replica.metrics import (
+            llm_call_duration_seconds, llm_calls_total, llm_tokens_total,
         )
-        return resp.choices[0].message.content or ""
+
+        operation = "messages.create" if self._is_anthropic else "chat.completions.create"
+        provider, model = self._provider, self._model
+        t0 = time.monotonic()
+        try:
+            if self._is_anthropic:
+                resp = await self._client.messages.create(
+                    model=model, max_tokens=max_tokens, messages=messages,
+                )
+                text = resp.content[0].text
+                usage = getattr(resp, "usage", None)
+                if usage is not None:
+                    in_tok = int(getattr(usage, "input_tokens", 0) or 0)
+                    out_tok = int(getattr(usage, "output_tokens", 0) or 0)
+                    if in_tok:
+                        llm_tokens_total.labels(provider=provider, model=model, kind="input").inc(in_tok)
+                    if out_tok:
+                        llm_tokens_total.labels(provider=provider, model=model, kind="output").inc(out_tok)
+            else:
+                resp = await self._client.chat.completions.create(
+                    model=model, messages=messages, max_tokens=max_tokens,
+                )
+                text = resp.choices[0].message.content or ""
+                usage = getattr(resp, "usage", None)
+                if usage is not None:
+                    in_tok = int(getattr(usage, "prompt_tokens", 0) or 0)
+                    out_tok = int(getattr(usage, "completion_tokens", 0) or 0)
+                    if in_tok:
+                        llm_tokens_total.labels(provider=provider, model=model, kind="input").inc(in_tok)
+                    if out_tok:
+                        llm_tokens_total.labels(provider=provider, model=model, kind="output").inc(out_tok)
+            llm_calls_total.labels(
+                provider=provider, model=model, operation=operation, outcome="ok",
+            ).inc()
+            return text
+        except Exception:
+            llm_calls_total.labels(
+                provider=provider, model=model, operation=operation, outcome="error",
+            ).inc()
+            raise
+        finally:
+            llm_call_duration_seconds.labels(
+                provider=provider, model=model, operation=operation,
+            ).observe(time.monotonic() - t0)
 
 
 def _build_llm(cfg: "ReplicaConfig") -> "_LLMWrapper | None":
@@ -65,7 +111,7 @@ def _build_llm(cfg: "ReplicaConfig") -> "_LLMWrapper | None":
 
         if provider == "ollama":
             client = AsyncOpenAI(base_url=f"{cfg.llm.endpoint}/v1", api_key="ollama")
-            return _LLMWrapper(client, model)
+            return _LLMWrapper(client, model, provider="ollama")
         if provider in ("openrouter", "openai_compat", "groq", "grok"):
             endpoint = cfg.llm.endpoint or {
                 "groq": "https://api.groq.com/openai/v1",
@@ -73,13 +119,16 @@ def _build_llm(cfg: "ReplicaConfig") -> "_LLMWrapper | None":
                 "openrouter": "https://openrouter.ai/api/v1",
             }.get(provider, cfg.llm.endpoint)
             client = AsyncOpenAI(base_url=endpoint, api_key=api_key or "x")
-            return _LLMWrapper(client, model)
+            return _LLMWrapper(client, model, provider=provider)
         if provider == "anthropic":
             from anthropic import AsyncAnthropic
             client = AsyncAnthropic(api_key=api_key)
-            return _LLMWrapper(client, model or "claude-haiku-4-5-20251001", is_anthropic=True)
+            return _LLMWrapper(
+                client, model or "claude-haiku-4-5-20251001",
+                is_anthropic=True, provider="anthropic",
+            )
         client = AsyncOpenAI(api_key=api_key)
-        return _LLMWrapper(client, model)
+        return _LLMWrapper(client, model, provider=provider or "openai")
     except Exception as exc:
         logger.warning("Could not build replica LLM client: %s", exc)
         return None

@@ -7,6 +7,7 @@ from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
 
 from shadow_replica.auth.token_verify import verify_request
+from shadow_replica.metrics import timeline_requests
 from shadow_replica.storage.received_store import ReceivedStore
 
 logger = logging.getLogger(__name__)
@@ -28,6 +29,7 @@ def make_router(store: ReceivedStore, trusted_devs: list) -> APIRouter:
         if dev.developer_id != developer_id:
             return JSONResponse({"error": "forbidden"}, status_code=403)
 
+        timeline_requests.labels(developer_id=developer_id).inc()
         rows = store.list_for_developer(developer_id, channel=channel, limit=limit)
         items = [
             {
