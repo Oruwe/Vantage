@@ -1670,6 +1670,10 @@
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3v12"/><path d="M18 9v12"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="6" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
           <span>Engineering Threads</span>
         </div>
+        <div class="sb-item" id="nav-perf" onclick="nav('perf')">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+          <span>Performance</span>
+        </div>
       </div>
       <div class="sb-hr"></div>
       <div class="sb-sec">
@@ -2104,6 +2108,7 @@ function nav(view){
   else if(view==='initiatives')document.getElementById('nav-inits')?.classList.add('active');
   else if(view==='resolutions')document.getElementById('nav-rez')?.classList.add('active');
   else if(view==='threads')document.getElementById('nav-threads')?.classList.add('active');
+  else if(view==='perf')document.getElementById('nav-perf')?.classList.add('active');
   else document.querySelector(`[data-did="${view}"]`)?.classList.add('active');
 
   const go=()=>{
@@ -2115,6 +2120,7 @@ function nav(view){
     else if(view==='initiatives')renderInitiatives();
     else if(view==='resolutions')renderResolutions();
     else if(view==='threads')renderThreads();
+    else if(view==='perf')renderPerf();
     else loadDev(view);
   };
   if(document.startViewTransition)document.startViewTransition(go);
@@ -4002,6 +4008,132 @@ function thCard(t){
 function thToggle(key){
   TH.openKey = (TH.openKey===key?null:key);
   renderThreadsList();
+}
+
+/* ══ Performance ═════════════════════════════════════════════════════ */
+/* Reads /ui/api/perf (manager-token gated JSON summary of the live
+   Prometheus registry) and renders a card per subsystem with p50/p95/p99
+   plus relevant counters. Auto-refreshes every 10s while the view is open.
+   Explicitly NOT trying to replace Grafana — this is the "is anything on
+   fire right now" at-a-glance surface. */
+let PERF_TIMER=null;
+const PERF_LABELS={
+  http:{title:'HTTP requests',sub:'All FastAPI endpoints (replica)'},
+  probe:{title:'Live probes',sub:'Replica → ghost WS round-trip'},
+  llm:{title:'LLM calls',sub:'Manager-agent + subscriber-agent'},
+  qdrant:{title:'Qdrant ops',sub:'Vector search + upserts'},
+  embedder:{title:'Embedder',sub:'Text → vector (Ollama / OpenAI)'},
+  tool_call:{title:'Agent tool calls',sub:'Manager-agent ≤12 tools'},
+};
+
+async function renderPerf(){
+  const el=document.getElementById('content');
+  el.innerHTML=`
+    <div class="ph">
+      <div class="ph-title">Performance</div>
+      <div class="ph-sub">p50/p95/p99 across the replica hot paths · auto-refresh 10s</div>
+    </div>
+    <div style="display:flex;gap:12px;margin:0 0 16px;align-items:center">
+      <button onclick="perfLoad()" style="background:transparent;color:var(--tx2);border:1px solid var(--bd);border-radius:6px;padding:6px 12px;font-size:12px;cursor:pointer">↻ Refresh</button>
+      <span id="perf-stale" style="color:var(--tx3);font-size:11px"></span>
+    </div>
+    <div id="perf-grid" class="loading"><div class="spinner"></div> Reading registry…</div>`;
+  document.getElementById('init-load').hidden=true;
+  await perfLoad();
+  if(PERF_TIMER)clearInterval(PERF_TIMER);
+  PERF_TIMER=setInterval(()=>{
+    if(S.view==='perf')perfLoad();
+    else{clearInterval(PERF_TIMER);PERF_TIMER=null;}
+  },10000);
+}
+
+async function perfLoad(){
+  const data=await api('GET','/perf');
+  const grid=document.getElementById('perf-grid');
+  if(!grid)return;
+  if(!data){
+    grid.className='';
+    grid.innerHTML=`<div class="empty"><div class="empty-ico">⚠</div><div class="empty-ttl">No perf data</div><div class="empty-txt">The /ui/api/perf endpoint returned nothing. Check that the manager token is valid.</div></div>`;
+    return;
+  }
+  grid.className='';
+  const stamp=document.getElementById('perf-stale');
+  if(stamp)stamp.textContent='updated '+new Date().toLocaleTimeString();
+  const cards=Object.keys(PERF_LABELS).map(k=>perfCard(k,data[k]||{})).join('');
+  grid.innerHTML=`
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px">${cards}</div>
+    <div style="margin-top:28px">
+      <div style="font-size:13px;font-weight:600;color:var(--tx);margin-bottom:10px;letter-spacing:.3px">Total counters</div>
+      ${perfCountersBlock(data.counters||{})}
+    </div>`;
+}
+
+function perfCard(key,stats){
+  const meta=PERF_LABELS[key]||{title:key,sub:''};
+  const hasData=Number.isFinite(stats.count)&&stats.count>0;
+  const fmt=v=>v==null?'—':(v>=1000?(v/1000).toFixed(2)+'s':Math.round(v)+'ms');
+  const p50Class=_perfBand(stats.p50,key);
+  const p95Class=_perfBand(stats.p95,key);
+  const p99Class=_perfBand(stats.p99,key);
+  return `
+    <div style="background:var(--sf);border:1px solid var(--bd);border-radius:12px;padding:16px 18px">
+      <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:10px">
+        <div>
+          <div style="font-size:13px;font-weight:600;color:var(--tx)">${h(meta.title)}</div>
+          <div style="font-size:11px;color:var(--tx3);margin-top:2px">${h(meta.sub)}</div>
+        </div>
+        <div style="font-size:11px;color:var(--tx3);font-family:var(--mono)">${hasData?(stats.count+' obs'):'no data'}</div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">
+        ${_perfQuantileBox('p50',fmt(stats.p50),p50Class)}
+        ${_perfQuantileBox('p95',fmt(stats.p95),p95Class)}
+        ${_perfQuantileBox('p99',fmt(stats.p99),p99Class)}
+      </div>
+      ${stats.avg!=null?`<div style="margin-top:8px;font-size:11px;color:var(--tx3);font-family:var(--mono)">avg ${fmt(stats.avg)}</div>`:''}
+    </div>`;
+}
+
+function _perfQuantileBox(label,val,band){
+  const color=band==='slow'?'var(--re)':band==='warn'?'var(--am)':'var(--tx)';
+  return `<div style="background:var(--sf2);border-radius:8px;padding:8px 10px;text-align:center">
+    <div style="font-size:10px;color:var(--tx3);letter-spacing:.3px;text-transform:uppercase">${label}</div>
+    <div style="font-size:15px;font-weight:600;font-family:var(--mono);color:${color};margin-top:2px">${val}</div>
+  </div>`;
+}
+
+/* Rough per-subsystem warn/slow thresholds in ms. Deliberately coarse —
+   operators tune via Grafana; this is only a visual nudge in the SPA. */
+const _PERF_THRESHOLDS={
+  http:{warn:250,slow:1000},
+  probe:{warn:1000,slow:2500},
+  llm:{warn:3000,slow:10000},
+  qdrant:{warn:100,slow:500},
+  embedder:{warn:250,slow:1000},
+  tool_call:{warn:500,slow:2000},
+};
+function _perfBand(ms,key){
+  if(ms==null)return'';
+  const t=_PERF_THRESHOLDS[key];if(!t)return'';
+  if(ms>=t.slow)return'slow';
+  if(ms>=t.warn)return'warn';
+  return'';
+}
+
+function perfCountersBlock(c){
+  const row=(lbl,v)=>`
+    <div style="display:flex;justify-content:space-between;padding:8px 12px;border-bottom:1px solid var(--bd)">
+      <span style="font-size:12px;color:var(--tx2)">${h(lbl)}</span>
+      <span style="font-size:12px;font-family:var(--mono);color:var(--tx)">${Number(v||0).toLocaleString()}</span>
+    </div>`;
+  return `<div style="background:var(--sf);border:1px solid var(--bd);border-radius:10px;overflow:hidden">
+    ${row('HTTP requests',c.http_requests)}
+    ${row('Artifacts received',c.artifacts_received)}
+    ${row('Probe requests',c.probe_requests)}
+    ${row('Timeline requests',c.timeline_requests)}
+    ${row('Dashboard requests',c.dashboard_requests)}
+    ${row('LLM calls',c.llm_calls)}
+    ${row('Agent tool calls',c.agent_tool_calls)}
+  </div>`;
 }
 
 async function renderResolutions(){
