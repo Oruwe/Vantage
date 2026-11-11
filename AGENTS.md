@@ -56,6 +56,7 @@ uv run vantage-ghost github ingest-reviews --repo owner/repo --pr 42
 **Start shadow-replica (manager side, port 7475):**
 ```
 uv run shadow-replica serve
+uv run shadow-replica serve --ssl-keyfile key.pem --ssl-certfile cert.pem   # HTTPS (recommended)
 ```
 
 **Manager CLI (no server required):**
@@ -92,7 +93,7 @@ The root `src/vantage/` package (`vantage`) is a pure-schema library depended on
 - **`SessionTailer`** — reads Codex/Codex session JSON files from `~/.Codex/projects/` (or configured dirs) and streams turns
 - **`ProjectMap`** — scans `project_roots` to map session dirs to git repos
 - **`SubscriberRegistry`** — SQLite table of subscribers; each has a HMAC bearer token (`vsub_...`), channels list, and receive URL
-- **`build_app()`** (`ui/local_app.py`) — Jinja2-rendered FastAPI app at `http://127.0.0.1:7474`; routes: `/` (pending drafts), `/draft/{id}` (approve/reject), `/audit`, `/subscribers`, `/api/history`, `/api/search`
+- **`build_app()`** (`ui/local_app.py`) — Jinja2-rendered FastAPI app at `http://127.0.0.1:7474`; routes: `/` (pending drafts), `/draft/{id}` (approve/reject), `/audit`, `/subscribers`, `/api/history`, `/api/search`. Wrapped by `install_local_guard()` (`ui/local_guard.py`) — localhost-only Host + Origin checks.
 
 Four LLM agents generate drafts: `DigestAgent`, `CommitAgent`, `StandupAgent`, `PRAgent`. All are async, receive an `LLMProvider` from `models/registry.py`, and return a Pydantic model that gets submitted to `ApprovalGate`.
 
@@ -136,7 +137,9 @@ The static SPA (`static/index.html`) is a single-file vanilla JS app served at `
 
 ### Auth model
 
-- **Ghost → Replica push:** HMAC-SHA256 signature over `developer_id + ":" + payload_json` using the per-subscriber bearer token (`vsub_...`). Verified in `auth/token_verify.py`.
+- **Ghost → Replica push:** `Authorization: Bearer vsub_...` plus `X-Vantage-Signature: sha256=<hex>`, an HMAC-SHA256 over the **raw request body** keyed by the same `vsub_` token (`transport/push.py`). The signature is **required** on `/v1/receive` (`verify_request(..., require_signature=True)` in `auth/token_verify.py`); read-only endpoints accept unsigned requests because the collision poller does not sign. Because the key is the token sent as the bearer, the signature proves body integrity, not a second secret — TLS is what protects the token. A repeated `approval_id` returns `200 {"status": "duplicate"}` without re-notifying.
+- **Transport:** the ghost refuses non-`https://` subscriber URLs unless the host is loopback or `--allow-insecure-http` is passed (`subscribers/registry.py:validate_receive_url`). `shadow-replica serve --ssl-keyfile … --ssl-certfile …` serves HTTPS; without them it warns.
+- **Ghost local UI:** `ui/local_guard.py` answers only loopback `Host` names (plus `ui.bind_address` / `ui.allowed_hosts`) → 400 otherwise, and refuses state-changing requests with a foreign or `null` `Origin` → 403. Blocks DNS-rebinding and CSRF against the approval gate.
 - **Daemon → Replica WebSocket:** Bearer token in `Authorization` header; matched against `TrustedDev.token_value`.
 - **Manager → UI API:** Bearer token (`vsm_...`) compared with `hmac.compare_digest` against `cfg.manager_token`.
 

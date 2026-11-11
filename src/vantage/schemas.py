@@ -154,7 +154,11 @@ class DraftPayload(BaseModel, Generic[T]):
 
 
 class ApprovedPayload(BaseModel, Generic[T]):
-    """Construct only via ApprovalGate — enforced by convention and type checking."""
+    """Construct only via ApprovalGate.approve/get_approved.
+
+    Enforced by convention, not by the type system: ApprovalGate is the only
+    production construction site, and transport.push accepts only this type.
+    """
     approval_id: str = Field(default_factory=lambda: str(uuid4()))
     draft_id: str
     artifact_type: str

@@ -5,7 +5,7 @@ FastAPI's TestClient to exercise every major endpoint added this session.
 
 Auth model (per shadow_replica/auth/token_verify.py):
   - Authorization: Bearer <subscriber_token_value>   (required)
-  - X-Vantage-Signature: sha256=<hex HMAC-SHA256(token, body)>  (optional)
+  - X-Vantage-Signature: sha256=<hex HMAC-SHA256(token, body)>  (required on /v1/receive)
 
 Manager-side (ui_api, wiretap):
   - Authorization: Bearer <manager_token>, or ?token=<manager_token> on SSE
