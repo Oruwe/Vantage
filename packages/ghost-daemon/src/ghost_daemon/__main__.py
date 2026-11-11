@@ -502,12 +502,13 @@ def _build_pairing_code(cfg, identity, github_login: str = "") -> str:
 
 @app.command("pair")
 def pair_command(
-    receive_url: Annotated[str, typer.Argument(help="Manager's shadow-replica URL, e.g. http://manager-host:7475")],
+    receive_url: Annotated[str, typer.Argument(help="Manager's shadow-replica URL, e.g. https://manager-host:7475")],
     name: Annotated[str, typer.Option("--name", "-n", help="How the manager should label you")] = "",
     github_login: Annotated[str, typer.Option("--github-login", "-g", help="Your GitHub username (for webhook attribution). Auto-detected from git config if omitted.")] = "",
     channels: Annotated[list[str], typer.Option("--channels", "-c", help="Channels to share (default: all common ones)")] = [
         "weekly_digest", "commit_report", "standup", "pr_draft", "quick_note",
     ],
+    allow_insecure_http: Annotated[bool, typer.Option("--allow-insecure-http", help="Allow a plain http:// URL to another machine (token and artifacts travel unencrypted)")] = False,
 ):
     """Create a subscriber and print a one-string pairing code for the manager.
 
@@ -529,7 +530,11 @@ def pair_command(
         typer.echo(f"Unknown channel: {exc}", err=True)
         raise typer.Exit(1)
 
-    identity = registry.add(label, receive_url, parsed_channels)
+    try:
+        identity = registry.add(label, receive_url, parsed_channels, allow_insecure_http=allow_insecure_http)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1)
     inferred = github_login or _infer_github_login()
     code = _build_pairing_code(cfg, identity, github_login=inferred)
 
@@ -612,14 +617,20 @@ def subscribers_add(
     name: Annotated[str, typer.Argument(help="Display name for this subscriber, e.g. 'alice'")],
     receive_url: Annotated[str, typer.Option("--receive-url", "-u", help="Base URL of their shadow-replica")] = "",
     channels: Annotated[list[str], typer.Option("--channels", "-c", help="Channels to enable (default: weekly_digest)")] = ["weekly_digest"],
+    allow_insecure_http: Annotated[bool, typer.Option("--allow-insecure-http", help="Allow a plain http:// URL to another machine (token and artifacts travel unencrypted)")] = False,
 ):
     """Add a subscriber. Prints the token they need to configure their shadow-replica."""
     from ghost_daemon import config as _cfg_mod
-    from ghost_daemon.subscribers.registry import SubscriberRegistry
+    from ghost_daemon.subscribers.registry import SubscriberRegistry, validate_receive_url
     from vantage.schemas import Channel
 
     if not receive_url:
-        receive_url = typer.prompt("Subscriber's shadow-replica URL (e.g. http://server:7475)")
+        receive_url = typer.prompt("Subscriber's shadow-replica URL (e.g. https://server:7475)")
+    try:
+        validate_receive_url(receive_url, allow_insecure_http=allow_insecure_http)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1)
 
     cfg = _cfg_mod.load()
     registry = SubscriberRegistry(cfg.sqlite_path)
@@ -632,7 +643,7 @@ def subscribers_add(
             typer.echo(f"Unknown channel {ch!r}. Valid: weekly_digest, commit_report, standup, pr_draft", err=True)
             raise typer.Exit(1)
 
-    identity = registry.add(name, receive_url, parsed_channels)
+    identity = registry.add(name, receive_url, parsed_channels, allow_insecure_http=allow_insecure_http)
 
     typer.echo(f"\nSubscriber '{identity.name}' added.")
     typer.echo(f"  ID         : {identity.subscriber_id}")

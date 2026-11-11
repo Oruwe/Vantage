@@ -2936,21 +2936,47 @@ function wtSetFilter(intent){
 function wtConnect(){
   if(!S.token)return;
   if(WT.es){try{WT.es.close()}catch{}WT.es=null}
-  const url=`/ui/api/wiretap/stream?token=${encodeURIComponent(S.token)}`;
-  const es=new EventSource(url);
-  es.onopen=()=>{
-    const p=document.getElementById('wt-pulse');if(p){p.classList.add('live');p.classList.remove('err')}
+  // fetch() + Authorization header rather than EventSource: EventSource can't
+  // send headers, which forced the manager token into the URL — and from
+  // there into access logs, proxy logs and browser history.
+  const ctrl=new AbortController();
+  const handle={closed:false,close(){this.closed=true;ctrl.abort()}};
+  WT.es=handle;
+  const pulse=(ok)=>{
+    const p=document.getElementById('wt-pulse');if(p){p.classList.toggle('live',ok);p.classList.toggle('err',!ok)}
   };
-  es.onmessage=(ev)=>{
+  const retry=()=>{
+    pulse(false);
+    // EventSource used to reconnect on its own; keep that behaviour.
+    setTimeout(()=>{if(!handle.closed&&WT.es===handle){WT.es=null;wtConnect()}},3000);
+  };
+  (async()=>{
     try{
-      const env=JSON.parse(ev.data);
-      wtIngest(env);
-    }catch{}
-  };
-  es.onerror=()=>{
-    const p=document.getElementById('wt-pulse');if(p){p.classList.remove('live');p.classList.add('err')}
-  };
-  WT.es=es;
+      const resp=await fetch('/ui/api/wiretap/stream',{
+        headers:{'Authorization':'Bearer '+S.token,'Accept':'text/event-stream'},
+        signal:ctrl.signal,cache:'no-store',
+      });
+      if(resp.status===401){handle.close();WT.es=null;logout();return}
+      if(!resp.ok||!resp.body){retry();return}
+      pulse(true);
+      const reader=resp.body.getReader();
+      const decoder=new TextDecoder();
+      let buf='';
+      while(true){
+        const {value,done}=await reader.read();
+        if(done)break;
+        buf+=decoder.decode(value,{stream:true});
+        let idx;
+        while((idx=buf.indexOf('\n\n'))!==-1){
+          const frame=buf.slice(0,idx);buf=buf.slice(idx+2);
+          const data=frame.split('\n').filter(l=>l.startsWith('data:')).map(l=>l.slice(5).replace(/^ /,'')).join('\n');
+          if(!data)continue;
+          try{wtIngest(JSON.parse(data))}catch{}
+        }
+      }
+      retry();
+    }catch(e){if(!handle.closed)retry()}
+  })();
 }
 function renderWiretap(){
   const el=document.getElementById('content');

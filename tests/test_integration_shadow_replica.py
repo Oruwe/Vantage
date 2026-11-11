@@ -5,7 +5,7 @@ FastAPI's TestClient to exercise every major endpoint added this session.
 
 Auth model (per shadow_replica/auth/token_verify.py):
   - Authorization: Bearer <subscriber_token_value>   (required)
-  - X-Vantage-Signature: sha256=<hex HMAC-SHA256(token, body)>  (optional)
+  - X-Vantage-Signature: sha256=<hex HMAC-SHA256(token, body)>  (required on /v1/receive)
 
 Manager-side (ui_api, wiretap):
   - Authorization: Bearer <manager_token>, or ?token=<manager_token> on SSE
@@ -135,13 +135,31 @@ def test_wiretap_stream_rejects_bad_query_token(client):
         assert r.status_code == 401
 
 
-def test_wiretap_stream_accepts_valid_query_token(client):
-    # EventSource can't set headers in browsers, so the endpoint must honor ?token=.
+def test_wiretap_stream_accepts_bearer_header(client):
+    # The dashboard streams with fetch() + Authorization header, so the token
+    # never appears in a URL (and therefore never in access/proxy logs).
     # Use client.stream() so we never try to drain the forever-open SSE body;
     # we only need to confirm the response starts with the right status + type.
-    with client.stream("GET", f"/ui/api/wiretap/stream?token={MGR_TOKEN}") as r:
+    with client.stream("GET", "/ui/api/wiretap/stream", headers=_mgr()) as r:
         assert r.status_code == 200
         assert "text/event-stream" in r.headers.get("content-type", "")
+
+
+def test_wiretap_stream_query_token_still_works_but_is_deprecated(client, caplog):
+    # Kept for one release so older dashboards/scripts don't break.
+    with caplog.at_level("WARNING", logger="shadow_replica.api.wiretap"):
+        with client.stream("GET", f"/ui/api/wiretap/stream?token={MGR_TOKEN}") as r:
+            assert r.status_code == 200
+    assert any("deprecated" in rec.getMessage() for rec in caplog.records)
+
+
+def test_dashboard_does_not_put_manager_token_in_stream_url():
+    from pathlib import Path
+    import shadow_replica
+
+    html = (Path(shadow_replica.__file__).parent / "static" / "index.html").read_text(encoding="utf-8")
+    assert "wiretap/stream?token=" not in html
+    assert "new EventSource(" not in html
 
 
 # ── Baseline shape (fresh store) ────────────────────────────────────────────

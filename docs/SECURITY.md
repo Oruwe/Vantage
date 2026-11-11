@@ -95,9 +95,20 @@ The replica now requires the signature header on `/v1/receive`
 (`shadow_replica/auth/token_verify.py:verify_request(..., require_signature=True)`).
 Because the signing key is the same token sent in the bearer header, the
 signature is an integrity check on the body, not a second independent secret.
-TLS (termination at a reverse proxy in production, or `uvicorn --ssl-*` on
-the service itself) is what keeps that token off the wire for an
-eavesdropper.
+TLS is what keeps that token off the wire for an eavesdropper: terminate it
+at a reverse proxy in production, or run
+`shadow-replica serve --ssl-keyfile key.pem --ssl-certfile cert.pem` (the
+command warns when started without them). On the ghost side,
+`subscribers/registry.py:validate_receive_url` refuses to pair with a
+plain `http://` URL unless the host is loopback (local demo) or the
+developer passes `--allow-insecure-http`; subscribers paired before this
+check existed are not re-validated.
+
+The manager dashboard streams the wiretap with `fetch()` and an
+`Authorization` header, so the `vsm_` token never appears in a URL (and
+therefore not in access logs, proxy logs or browser history). The old
+`?token=` query parameter on `/ui/api/wiretap/stream` still works for one
+release and logs a deprecation warning.
 
 Additionally, `/v1/receive` short-circuits a duplicate `approval_id` with
 `200 {"status": "duplicate"}`, skipping save and notifications — so a retry
