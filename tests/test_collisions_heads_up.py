@@ -36,7 +36,7 @@ def subscriber_with_identity(tmp_path: Path):
     reg = SubscriberRegistry(tmp_path / "vantage.db")
     reg.add(
         name="manager-a",
-        receive_url="http://manager-a.local",
+        receive_url="https://manager-a.local",
         channels=[Channel.WEEKLY_DIGEST],
     )
     return reg
@@ -64,8 +64,8 @@ def test_poller_aggregates_across_subscribers(tmp_path: Path) -> None:
     from vantage.schemas import Channel
 
     reg = SubscriberRegistry(tmp_path / "vantage.db")
-    reg.add("m1", "http://m1.local", [Channel.WEEKLY_DIGEST])
-    reg.add("m2", "http://m2.local", [Channel.WEEKLY_DIGEST])
+    reg.add("m1", "https://m1.local", [Channel.WEEKLY_DIGEST])
+    reg.add("m2", "https://m2.local", [Channel.WEEKLY_DIGEST])
 
     def handler(request: httpx.Request) -> httpx.Response:
         if "m1" in str(request.url):
@@ -100,7 +100,7 @@ def test_poller_aggregates_across_subscribers(tmp_path: Path) -> None:
 
 def test_poller_dedupes_by_collision_id(tmp_path: Path, subscriber_with_identity) -> None:
     from vantage.schemas import Channel
-    subscriber_with_identity.add("manager-b", "http://manager-b.local", [Channel.WEEKLY_DIGEST])
+    subscriber_with_identity.add("manager-b", "https://manager-b.local", [Channel.WEEKLY_DIGEST])
     poller = CollisionPoller(
         subscribers=subscriber_with_identity,
         developer_id="alice",
@@ -149,8 +149,8 @@ def test_poller_tolerates_one_subscriber_failing(tmp_path: Path) -> None:
     from vantage.schemas import Channel
 
     reg = SubscriberRegistry(tmp_path / "vantage.db")
-    reg.add("good", "http://good.local", [Channel.WEEKLY_DIGEST])
-    reg.add("bad", "http://bad.local", [Channel.WEEKLY_DIGEST])
+    reg.add("good", "https://good.local", [Channel.WEEKLY_DIGEST])
+    reg.add("bad", "https://bad.local", [Channel.WEEKLY_DIGEST])
 
     poller = CollisionPoller(subscribers=reg, developer_id="alice", refresh_seconds=0.0)
 
@@ -215,7 +215,7 @@ def ghost_app_with_poller(tmp_path: Path):
     store = SQLiteStore(tmp_path / "vantage.db")
     audit = AuditLog(tmp_path / "audit", retention_days=7)
     subs = SubscriberRegistry(tmp_path / "vantage.db")
-    subs.add("m1", "http://m1.local", [Channel.WEEKLY_DIGEST])
+    subs.add("m1", "https://m1.local", [Channel.WEEKLY_DIGEST])
     gate = ApprovalGate(store, "alice")
 
     poller = CollisionPoller(subscribers=subs, developer_id="alice", refresh_seconds=60.0)
