@@ -15,6 +15,7 @@ This page says what enforces that today, and where it stops.
 | An unknown sender pushes artifacts | Bearer `vsub_…` token compared with `hmac.compare_digest` against trusted devs. | `shadow_replica/auth/token_verify.py` |
 | A push body is altered in transit | `X-Vantage-Signature` (HMAC-SHA256 of the raw body) is required on `/v1/receive`. | `shadow_replica/auth/token_verify.py` |
 | A retried/replayed push spams the manager or overwrites history | A repeated `approval_id` returns `200 duplicate` with no save, no notification. | `shadow_replica/api/receive.py` |
+| The manager token leaks through URLs / access logs | Dashboard streams the wiretap with `fetch()` + `Authorization` header, not `EventSource ?token=`. | `shadow_replica/static/index.html`, `api/wiretap.py` |
 | A manager reads another manager's agent conversations | Chat memory is keyed by a hash of the manager token. | `shadow_replica/agent/chat_memory.py` |
 
 ## What is NOT protected (yet)
@@ -30,8 +31,10 @@ Be explicit about these when demoing or deploying:
 - **The replica sees plaintext.** There is no end-to-end encryption; the
   manager's server must render artifacts, so whoever runs it can read them.
 - **No roles.** Every `vsm_…` manager token sees every developer.
-- **The manager token appears in a URL** for the live wiretap stream
-  (`/ui/api/wiretap/stream?token=…`), so it can land in access logs.
+- **`?token=` is still accepted** on the wiretap stream for one release so
+  old dashboards and scripts keep working; it logs a deprecation warning.
+  The dashboard itself now sends the token in the `Authorization` header, so
+  it no longer appears in URLs or access logs.
 - **Redaction placeholders carry a short fingerprint** —
   `[REDACTED:<kind>:<first 6 hex of SHA-256>]`. It cannot be reversed, but
   someone who already has a candidate secret can check it against the
@@ -69,5 +72,5 @@ and start the replica bound to loopback: `uv run shadow-replica serve --host 127
   token is exchanged once at pairing and never sent again; each request
   carries `HMAC(token, timestamp + body)` and the replica rejects stale
   timestamps. This also gives real replay protection.
-- Move the wiretap stream to header auth or a short-lived stream ticket.
+- Remove the deprecated `?token=` fallback on the wiretap stream.
 - Per-manager scopes (which developers / channels a token may read).
