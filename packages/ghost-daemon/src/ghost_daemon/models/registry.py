@@ -15,8 +15,36 @@ class LLMProvider(Protocol):
     async def embed(self, text: str) -> list[float]: ...
 
 
+class _NullLLMProvider:
+    """Stand-in provider used when no real LLM is configured.
+
+    Lets the daemon boot without an API key — useful for tests and for the
+    coming offline demo mode. Completion raises so a real call path blows up
+    loud instead of silently returning an empty draft. Embedding returns a
+    zero vector so downstream code that only wants a shape keeps working.
+    """
+    model_id = "null"
+
+    async def complete(self, messages: list[dict], *, max_tokens: int = 600) -> str:
+        raise RuntimeError(
+            "No LLM provider is configured (cfg.llm.provider is empty). "
+            "Set it to 'groq', 'anthropic', 'ollama', 'grok', 'openrouter', "
+            "or 'openai_compat' in config.toml, or wire a real provider in."
+        )
+
+    async def embed(self, text: str) -> list[float]:
+        return [0.0] * 768
+
+
 def build_from_config(cfg: Config) -> LLMProvider:
     provider = cfg.llm.provider.lower()
+
+    if not provider:
+        return _NullLLMProvider()
+
+    if provider == "mock":
+        from ghost_daemon.models.providers.mock import MockLLMProvider
+        return MockLLMProvider()
 
     if provider == "anthropic":
         from ghost_daemon.models.providers.anthropic import AnthropicProvider

@@ -22,14 +22,13 @@ def verify_request(
 ) -> "TrustedDev":
     """Verify the Authorization bearer token and body HMAC signature.
 
-    The signature is HMAC-SHA256 over the raw body, keyed by the same token
-    sent as the bearer: it proves the body was not altered, not that the
-    sender holds a second secret. Pass ``require_signature=True`` for
-    endpoints that accept writes (``/v1/receive``); read-only endpoints are
-    called unsigned by the ghost's collision poller.
-
     Returns the matched TrustedDev on success.
     Raises HTTPException(401) if auth fails.
+
+    When `require_signature` is True, the X-Vantage-Signature header MUST be
+    present and valid — this is the push path (/v1/receive). Other callers
+    (GET timeline, probe handshake, dashboard) leave it optional so empty-body
+    read-only requests don't need to sign.
     """
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
@@ -47,15 +46,17 @@ def verify_request(
         raise HTTPException(status_code=401, detail="Unknown or revoked token")
 
     sig_header = request.headers.get("X-Vantage-Signature", "")
-    if not sig_header and require_signature:
-        raise HTTPException(status_code=401, detail="Missing body signature")
-    if sig_header:
-        expected_sig = "sha256=" + hmac.new(
-            matched.token_value.encode(),
-            body,
-            hashlib.sha256,
-        ).hexdigest()
-        if not hmac.compare_digest(sig_header, expected_sig):
-            raise HTTPException(status_code=401, detail="Body signature mismatch")
+    if not sig_header:
+        if require_signature:
+            raise HTTPException(status_code=401, detail="Missing body signature")
+        return matched
+
+    expected_sig = "sha256=" + hmac.new(
+        matched.token_value.encode(),
+        body,
+        hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(sig_header, expected_sig):
+        raise HTTPException(status_code=401, detail="Body signature mismatch")
 
     return matched

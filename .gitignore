@@ -1,30 +1,38 @@
-# Python bytecode / build output
+# Byte-compiled / optimized
 __pycache__/
 *.py[cod]
-*.pyc.*
-*.egg-info/
-build/
-dist/
+*$py.class
 
-# Environments and tool caches
+# Virtualenvs
 .venv/
+venv/
+env/
+
+# Test / lint caches
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
 .coverage
 htmlcov/
 
-# Local data and secrets — never commit these
-*.db
-*.sqlite
-*.sqlite3
-.env
-.env.*
-*.pem
-*.key
+# Build artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
 
-# OS / editor noise
+# Local state produced by Vantage at runtime
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Secrets / local config
+.env
+.env.local
+
+# OS / IDE junk
 .DS_Store
 Thumbs.db
-.idea/
 .vscode/
+.idea/

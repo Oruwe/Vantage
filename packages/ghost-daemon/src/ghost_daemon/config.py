@@ -9,6 +9,9 @@ from pathlib import Path
 
 
 def _vantage_dir() -> Path:
+    override = os.environ.get("VANTAGE_HOME", "").strip()
+    if override:
+        return Path(override).expanduser()
     if sys.platform == "win32":
         base = Path(os.environ.get("APPDATA", Path.home()))
         return base / "Vantage"
@@ -34,9 +37,6 @@ class EmbeddingsConfig:
 class UIConfig:
     bind_address: str = "127.0.0.1"
     port: int = 7474
-    # Extra hostnames the local UI answers to besides loopback (e.g. when
-    # bind_address is 0.0.0.0 and you open it as http://devbox.lan:7474).
-    allowed_hosts: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -164,7 +164,6 @@ def load(path: Path | None = None) -> Config:
         ui=UIConfig(
             bind_address=ui_data.get("bind_address", "127.0.0.1"),
             port=ui_data.get("port", 7474),
-            allowed_hosts=list(ui_data.get("allowed_hosts", [])),
         ),
         audit=AuditConfig(
             enabled=audit_data.get("enabled", True),

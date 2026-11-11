@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import traceback
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -254,15 +253,24 @@ def build_app(
     collisions: "CollisionPoller | None" = None,
 ) -> FastAPI:
     app = FastAPI(title="Vantage", docs_url=None, redoc_url=None)
-    install_local_guard(app, cfg.ui.bind_address, cfg.ui.allowed_hosts)
+    install_local_guard(app, cfg.ui.bind_address)
 
     @app.exception_handler(Exception)
     async def _debug_handler(request: Request, exc: Exception):
-        tb = traceback.format_exc()
-        logger.error("Unhandled error on %s: %s", request.url, exc)
+        # Log the full traceback for operators; show the user only a short
+        # error id + human-readable message. Stack traces leak file paths
+        # and sometimes session content — we keep them in the log, not the
+        # response body.
+        import secrets as _secrets
+        err_id = _secrets.token_hex(4)
+        logger.exception("Unhandled error [%s] on %s", err_id, request.url)
         return HTMLResponse(
-            f"<pre style='font-family:monospace;padding:2rem;background:#111;color:#f87171'>"
-            f"{tb}</pre>",
+            f"""<div style="font-family:system-ui,-apple-system,sans-serif;max-width:40rem;margin:4rem auto;padding:2rem;background:#121216;border:1px solid #27272e;border-radius:10px;color:#ededf0">
+<div style="font-size:1.1rem;font-weight:600;margin-bottom:0.5rem">Something went wrong.</div>
+<div style="color:#a0a0a8;line-height:1.55;font-size:0.9rem">The daemon hit an error handling this request. Details are in your local Vantage log; no data was sent anywhere.</div>
+<div style="color:#6c6c76;font-family:'Geist Mono',monospace;font-size:0.78rem;margin-top:1rem">error id: {err_id}</div>
+<div style="margin-top:1.25rem"><a href="/" style="color:#c4b5fd;text-decoration:none;font-size:0.9rem">← Back to drafts</a></div>
+</div>""",
             status_code=500,
         )
 

@@ -1652,7 +1652,7 @@
         </div>
         <div class="sb-item" id="nav-swarm" onclick="nav('swarm')">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="2"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="19" r="2"/><circle cx="12" cy="12" r="2.5"/><line x1="12" y1="7" x2="12" y2="10"/><line x1="10.5" y1="13.5" x2="6.5" y2="17.5"/><line x1="13.5" y1="13.5" x2="17.5" y2="17.5"/></svg>
-          <span>Swarm Topology</span>
+          <span>Team Map</span>
         </div>
         <div class="sb-item" id="nav-inits" onclick="nav('initiatives')">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15 8 22 9 17 14 18 21 12 18 6 21 7 14 2 9 9 8 12 2"/></svg>
@@ -1695,7 +1695,7 @@
       <div class="sb-hr"></div>
       <div class="sb-action" id="nav-wiretap" onclick="nav('wiretap')">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
-        <span style="flex:1">A2A Wiretap</span>
+        <span style="flex:1">Agent Activity</span>
         <span id="wt-pulse" class="wt-pulse" title="live"></span>
       </div>
       <div class="sb-action" onclick="nav('search')">
@@ -1803,7 +1803,7 @@
   <div class="cv-body" id="cv-body">
     <div style="text-align:center;color:var(--tx3);padding:40px 10px;font-size:12.5px">
       Ask a question that fans out to every online ghost in parallel.<br>
-      Answers come back threaded in the <b>A2A Wiretap</b>.
+      Answers come back threaded in <b>Agent Activity</b>.
     </div>
   </div>
   <div class="cv-foot">
@@ -2160,6 +2160,10 @@ function renderOverview(){
 
   /* Working Now */
   const onlineDevs=S.developers.filter(d=>online.has(d.developer_id));
+  // Only show the section when there's at least one dev to render AND at
+  // least one dev has opted in to live_probe. If no one is online we don't
+  // render anything here — the Team section below already explains who is
+  // paired and the live-badge in the toolbar handles the "0 online" state.
   const wnHtml=onlineDevs.length?`
     <div class="wn-section">
       <div class="wn-hdr">
@@ -2172,7 +2176,17 @@ function renderOverview(){
           return probe?wnCard(d,probe):wnSkeleton(d);
         }).join('')}
       </div>
-    </div>`:'';
+    </div>`:(S.developers.length?`
+    <div class="wn-section" style="opacity:0.7">
+      <div class="wn-hdr">
+        <div class="wn-title">Working Now</div>
+        <div class="wn-live" style="background:transparent;color:var(--tx3);border:1px solid var(--bd)">Idle</div>
+      </div>
+      <div style="padding:14px 4px;color:var(--tx3);font-size:12.5px;line-height:1.5">
+        None of your developers have a live session open right now.
+        This section fills in as soon as a paired developer opens their editor with Vantage running.
+      </div>
+    </div>`:'');
 
   /* Dev grid */
   const devGridHtml=S.developers.length?`
@@ -2206,7 +2220,16 @@ function renderOverview(){
           <div class="act-sum">${h(it.summary||'—')}</div>
           <div class="act-time">${ago(it.received_at)}</div>
         </div>`).join('')}
-    </div>`:'';
+    </div>`:(S.developers.length?`
+    <div class="sec-hdr"><span>Recent Activity</span></div>
+    <div class="empty" style="padding:28px 16px">
+      <div class="empty-ico">📭</div>
+      <div class="empty-ttl">No activity yet</div>
+      <div class="empty-txt">
+        Commits, standups, and PR drafts your developers approve will stream in here.
+        Nothing shows up until each developer clicks “Approve” on their side — Vantage never pulls raw session content.
+      </div>
+    </div>`:'');
 
   const el=document.getElementById('content');
   el.innerHTML=`
@@ -2963,8 +2986,8 @@ function renderWiretap(){
 <div class="wt-wrap">
   <div class="wt-head">
     <div>
-      <div class="wt-title">A2A Wiretap</div>
-      <div class="wt-sub">Live protocol stream · ghost ↔ replica ↔ manager</div>
+      <div class="wt-title">Agent Activity</div>
+      <div class="wt-sub">Live stream of messages passing between the ghost, the replica, and the manager agent</div>
     </div>
     <div class="wt-stats" id="wt-stats"></div>
   </div>
@@ -3271,8 +3294,8 @@ function renderSwarm(){
 <div class="sw-wrap">
   <div class="sw-head">
     <div>
-      <div class="wt-title">Swarm Topology</div>
-      <div class="wt-sub">Live agent graph · pulses = A2A envelopes · latency = pulse speed</div>
+      <div class="wt-title">Team Map</div>
+      <div class="wt-sub">Live view of each developer's agents · pulses show activity · faster pulses mean faster responses</div>
     </div>
     <div class="sw-stats" id="sw-stats"></div>
   </div>
@@ -4242,8 +4265,8 @@ const PAL = { items: [], filtered: [], sel: 0, query: '' };
 function palItems(){
   const base = [
     {label:'Overview', cat:'view', ico:'◫', run:()=>nav('overview')},
-    {label:'Swarm Topology', cat:'view', ico:'⬡', run:()=>nav('swarm')},
-    {label:'A2A Wiretap', cat:'view', ico:'≡', run:()=>nav('wiretap')},
+    {label:'Team Map', cat:'view', ico:'⬡', run:()=>nav('swarm')},
+    {label:'Agent Activity', cat:'view', ico:'≡', run:()=>nav('wiretap')},
     {label:'Initiatives', cat:'view', ico:'◇', run:()=>nav('initiatives')},
     {label:'Daily Brief', cat:'view', ico:'📑', run:()=>nav('brief')},
     {label:'Shared Resolutions', cat:'view', ico:'◇', run:()=>nav('resolutions')},
@@ -4447,15 +4470,15 @@ async function renderAgent(){
 function agEmptyHtml(){
   return `
     <div class="ag-empty">
-      <div class="big">Ask the team's history anything.</div>
+      <div class="big">Ask about your team.</div>
       <div style="font-size:12.5px;line-height:1.6;margin-bottom:14px">
-        I have 10 investigation tools over every approved commit, standup,
-        PR draft, bug resolution, GitHub event, and friction report.
+        Grounded in the commits, standups, and PR drafts each developer has
+        approved. Ask in plain English.
       </div>
       <div class="ex" onclick="agPrefill(this)"><code>→</code> what did Alice ship this week?</div>
-      <div class="ex" onclick="agPrefill(this)"><code>→</code> who looks stuck right now?</div>
-      <div class="ex" onclick="agPrefill(this)"><code>→</code> any merge-conflict risk in the next 48h?</div>
-      <div class="ex" onclick="agPrefill(this)"><code>→</code> why did we move auth to the gateway?</div>
+      <div class="ex" onclick="agPrefill(this)"><code>→</code> who's working on payments right now?</div>
+      <div class="ex" onclick="agPrefill(this)"><code>→</code> summarize the last three commits on the auth repo</div>
+      <div class="ex" onclick="agPrefill(this)"><code>→</code> which standups mention being blocked?</div>
     </div>
   `;
 }
@@ -4637,7 +4660,23 @@ async function agConsumeStream(url, body, assistantBubble, feed, sendBtn, navDot
     if(resp.status === 401){logout();return}
     if(!resp.ok){
       assistantBubble.classList.remove('streaming');
-      assistantBubble.textContent = `(error: HTTP ${resp.status})`;
+      // Try to surface the server's own error detail — it's much more useful
+      // than "HTTP 503". Common case in demo mode: "Manager agent not
+      // configured. Set [llm] provider=anthropic …".
+      let detail = '';
+      try {
+        const body = await resp.json();
+        if (body && typeof body.detail === 'string') detail = body.detail;
+      } catch { /* non-JSON response body */ }
+      if (resp.status === 503 && detail) {
+        assistantBubble.textContent = detail;
+      } else if (resp.status === 503) {
+        assistantBubble.textContent = 'The chat agent isn’t available on this server.';
+      } else {
+        assistantBubble.textContent = detail
+          ? `Couldn’t send: ${detail}`
+          : `Couldn’t send (HTTP ${resp.status}). Check the server log.`;
+      }
       return;
     }
 

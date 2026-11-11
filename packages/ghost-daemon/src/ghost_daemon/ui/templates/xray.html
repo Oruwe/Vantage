@@ -127,11 +127,10 @@
 </div>
 
 <div class="xr-explain">
-  <b>Side-by-side proof.</b> Left pane shows the shape of the secrets the local scrubber caught —
-  character counts and kind-specific signatures — before anything crossed a trust boundary.
-  Right pane shows the fingerprinted placeholders that actually leave your machine.
-  Hover any chip for details. The original values are never persisted anywhere; only a 6-char
-  SHA-256 fingerprint lives in the audit log for provenance chaining.
+  <b>Here's exactly what the scrubber caught.</b>
+  The left pane shows where secrets sat in your session — just the shape, never the value.
+  The right pane shows what will actually be sent to your manager if you approve.
+  Hover any chip to see what kind of secret was replaced.
 </div>
 
 <div class="xr-stats">
@@ -169,9 +168,8 @@
 
 <div class="xr-footer">
   <p class="xr-note">
-    If this draft reveals a redaction gap, update <code>redaction/scrubber.py</code>
-    and reject the draft. The pre-redaction content was never persisted — only a
-    SHA-256 fingerprint for provenance.
+    See a secret that wasn't caught? Reject the draft — nothing leaves your machine until you approve.
+    The original content was never saved; only a short fingerprint is kept so the audit log can link back to this draft.
   </p>
   <div class="actions" style="margin-top:0">
     <a href="/draft/{{ draft_id }}"><button class="btn-secondary">Back to draft</button></a>

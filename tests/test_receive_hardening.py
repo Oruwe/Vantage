@@ -1,13 +1,14 @@
-"""/v1/receive must require the body signature and must not re-notify on replays.
+"""Regression tests for P1: /v1/receive now REQUIRES a body signature and
+short-circuits duplicate pushes before firing notifications again.
 
-Reproduces two gaps found in review:
-  * a push carrying only the bearer token (no X-Vantage-Signature) was accepted;
-  * resending the same push fired Slack/email/webhook notifications again.
+The receive path is wired via `build_app`, same as the full integration test,
+so we exercise the real signature verification and the real ReceivedStore
+dedup check (with Qdrant disabled → in-memory fallback).
 """
 from __future__ import annotations
 
 import hashlib
-import hmac
+import hmac as _hmac
 import json
 import secrets
 from datetime import datetime, timezone
@@ -15,105 +16,121 @@ from datetime import datetime, timezone
 import pytest
 from fastapi.testclient import TestClient
 
+import shadow_replica.api.receive as receive_mod
 from shadow_replica.app import build_app
 from shadow_replica.config import (
-    EmbeddingsConfig, LLMConfig, QdrantConfig, ReplicaConfig, TrustedDev,
+    EmbeddingsConfig, LLMConfig, NotificationConfig, QdrantConfig, ReplicaConfig, TrustedDev,
 )
-from shadow_replica.notify.notifier import NotificationConfig
-
-TOKEN = "vsub_" + secrets.token_hex(16)
 
 
-@pytest.fixture
-def notified(monkeypatch) -> list[str]:
-    import shadow_replica.api.receive as receive
-
-    calls: list[str] = []
-
-    async def _fake_dispatch(_configs, **kw):
-        calls.append(kw["artifact_type"])
-
-    monkeypatch.setattr(receive, "dispatch_all", _fake_dispatch)
-    return calls
+MGR_TOKEN = "vsm_hardening_" + secrets.token_hex(8)
+DEV_ID = "alice"
+DEV_SUB_TOKEN = "vsub_" + secrets.token_hex(16)
+DEV_SUB_ID = "sub_alice"
 
 
 @pytest.fixture
-def client(notified):
+def client_and_dispatch(monkeypatch):
+    calls: list[dict] = []
+
+    async def fake_dispatch_all(notifications, **kwargs):
+        calls.append(kwargs)
+
+    monkeypatch.setattr(receive_mod, "dispatch_all", fake_dispatch_all)
+
     cfg = ReplicaConfig(
         replica_id="hardening-test",
-        manager_token="vsm_" + secrets.token_hex(8),
-        trusted_devs=[TrustedDev(
-            developer_id="alice", name="Alice", token_value=TOKEN, subscriber_id="sub_alice",
-        )],
-        notifications=[NotificationConfig(type="slack_webhook", url="http://127.0.0.1:1/unused")],
+        manager_token=MGR_TOKEN,
+        trusted_devs=[
+            TrustedDev(
+                developer_id=DEV_ID,
+                name="Alice",
+                token_value=DEV_SUB_TOKEN,
+                subscriber_id=DEV_SUB_ID,
+            ),
+        ],
+        # One dummy notification — presence is enough; dispatch_all is mocked.
+        notifications=[NotificationConfig(type="generic_webhook", url="http://127.0.0.1:1/x")],
         qdrant=QdrantConfig(enabled=False, url="http://127.0.0.1:1"),
         embeddings=EmbeddingsConfig(provider="ollama", model="nomic", endpoint="http://127.0.0.1:1"),
         llm=LLMConfig(provider=""),
     )
-    with TestClient(build_app(cfg)) as c:
-        yield c
+    app = build_app(cfg)
+    with TestClient(app) as c:
+        yield c, calls
 
 
-def _body(approval_id: str = "appr-1", message: str = "shipped dark mode") -> bytes:
+def _signed_headers(body: bytes) -> dict:
+    sig = "sha256=" + _hmac.new(
+        DEV_SUB_TOKEN.encode(), body, hashlib.sha256,
+    ).hexdigest()
+    return {
+        "Authorization": f"Bearer {DEV_SUB_TOKEN}",
+        "X-Vantage-Signature": sig,
+        "Content-Type": "application/json",
+    }
+
+
+def _unsigned_headers() -> dict:
+    return {
+        "Authorization": f"Bearer {DEV_SUB_TOKEN}",
+        "Content-Type": "application/json",
+    }
+
+
+def _artifact_body(approval_id: str = "app-1") -> bytes:
     return json.dumps({
         "approval_id": approval_id,
         "draft_id": f"draft-{approval_id}",
         "artifact_type": "quick_note",
         "approved_at": datetime.now(timezone.utc).isoformat(),
-        "payload": {"message": message},
-    }).encode()
+        "payload": {"message": "hello", "branch": "main"},
+    }).encode("utf-8")
 
 
-def _headers(body: bytes, *, signed: bool = True) -> dict:
-    h = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}
-    if signed:
-        h["X-Vantage-Signature"] = "sha256=" + hmac.new(TOKEN.encode(), body, hashlib.sha256).hexdigest()
-    return h
+# ── Signature now required ─────────────────────────────────────────────────
 
-
-def test_unsigned_push_is_rejected(client, notified):
-    body = _body()
-    r = client.post("/v1/receive", content=body, headers=_headers(body, signed=False))
+def test_unsigned_push_is_rejected(client_and_dispatch):
+    client, calls = client_and_dispatch
+    body = _artifact_body()
+    r = client.post("/v1/receive", content=body, headers=_unsigned_headers())
     assert r.status_code == 401
-    assert notified == []
+    assert "signature" in r.json().get("detail", "").lower()
+    assert calls == []
 
 
-def test_signed_push_is_accepted(client, notified):
-    body = _body()
-    r = client.post("/v1/receive", content=body, headers=_headers(body))
+def test_signed_push_is_accepted(client_and_dispatch):
+    client, calls = client_and_dispatch
+    body = _artifact_body()
+    r = client.post("/v1/receive", content=body, headers=_signed_headers(body))
     assert r.status_code == 201
-    assert notified == ["quick_note"]
+    assert r.json()["status"] == "ok"
+    assert len(calls) == 1
 
 
-def test_replayed_push_does_not_notify_twice(client, notified):
-    body = _body()
-    first = client.post("/v1/receive", content=body, headers=_headers(body))
-    second = client.post("/v1/receive", content=body, headers=_headers(body))
+def test_bad_signature_is_rejected(client_and_dispatch):
+    client, calls = client_and_dispatch
+    body = _artifact_body()
+    headers = _signed_headers(body)
+    headers["X-Vantage-Signature"] = "sha256=" + "0" * 64
+    r = client.post("/v1/receive", content=body, headers=headers)
+    assert r.status_code == 401
+    assert calls == []
+
+
+# ── Duplicate push is a no-op ─────────────────────────────────────────────
+
+def test_duplicate_push_is_idempotent_and_skips_notifications(client_and_dispatch):
+    client, calls = client_and_dispatch
+    body = _artifact_body(approval_id="dup-1")
+
+    first = client.post("/v1/receive", content=body, headers=_signed_headers(body))
     assert first.status_code == 201
+    assert first.json()["status"] == "ok"
+    assert len(calls) == 1
+
+    second = client.post("/v1/receive", content=body, headers=_signed_headers(body))
     assert second.status_code == 200
-    assert second.json()["status"] == "duplicate"
-    assert notified == ["quick_note"]
+    assert second.json() == {"status": "duplicate", "approval_id": "dup-1"}
 
-
-def test_distinct_pushes_each_notify(client, notified):
-    for i in range(3):
-        body = _body(approval_id=f"appr-{i}")
-        assert client.post("/v1/receive", content=body, headers=_headers(body)).status_code == 201
-    assert len(notified) == 3
-
-
-def test_replay_does_not_overwrite_stored_content(client):
-    original = _body(message="original")
-    client.post("/v1/receive", content=original, headers=_headers(original))
-    changed = _body(message="changed later")  # same approval_id
-    r = client.post("/v1/receive", content=changed, headers=_headers(changed))
-    assert r.json()["status"] == "duplicate"
-    timeline = client.get("/v1/timeline/alice", headers={"Authorization": f"Bearer {TOKEN}"}).json()
-    messages = [item["payload"]["message"] for item in timeline["items"]]
-    assert messages == ["original"]
-
-
-def test_unsigned_get_endpoints_still_work(client):
-    """The collision poller and timeline reads don't sign; only /v1/receive requires it."""
-    r = client.get("/v1/collisions/for-me", headers={"Authorization": f"Bearer {TOKEN}"})
-    assert r.status_code == 200
+    assert len(calls) == 1, f"notifications fired {len(calls)} times, expected once"

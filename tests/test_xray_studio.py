@@ -28,13 +28,13 @@ def daemon_app(tmp_path, monkeypatch):
     vantage_dir = tmp_path / ".vantage"
     vantage_dir.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr("ghost_daemon.config._vantage_dir", lambda: vantage_dir)
-    # GhostDaemon resolves the default provider's key at construction. These
-    # tests never call the LLM, so a placeholder lets them run on a fresh
-    # clone with no keys (or keychain backend) configured.
-    monkeypatch.setenv("GROQ_API_KEY", "test-placeholder-not-used")
 
     from ghost_daemon.config import load as load_cfg
     cfg = load_cfg()
+    # Drop the LLM — the daemon boots with the null provider and no API key
+    # is required. Any test that actually exercises a generation path has to
+    # supply its own provider via monkeypatching.
+    cfg.llm.provider = ""
     cfg.state_dir.mkdir(parents=True, exist_ok=True)
     cfg.audit_dir.mkdir(parents=True, exist_ok=True)
 

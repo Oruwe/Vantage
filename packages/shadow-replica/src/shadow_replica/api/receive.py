@@ -52,12 +52,16 @@ def make_router(
         if not approval_id:
             return JSONResponse({"error": "missing approval_id"}, status_code=400)
 
-        # A retried or replayed push must not re-notify the manager or
-        # overwrite what was already received. 200 (not 201) still reads as
-        # success to the ghost, so it stops retrying.
         if store.exists(approval_id):
-            logger.info("Duplicate push for approval_id=%s from %s ignored", approval_id, dev.developer_id)
-            return JSONResponse({"status": "duplicate", "approval_id": approval_id}, status_code=200)
+            logger.info(
+                "Duplicate push %s from developer %s — skipping save and notifications",
+                approval_id,
+                dev.developer_id,
+            )
+            return JSONResponse(
+                {"status": "duplicate", "approval_id": approval_id},
+                status_code=200,
+            )
 
         payload_json = json.dumps(payload)
         await store.save_async(

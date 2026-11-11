@@ -99,8 +99,30 @@ class _LLMWrapper:
             ).observe(time.monotonic() - t0)
 
 
-def _build_llm(cfg: "ReplicaConfig") -> "_LLMWrapper | None":
+class _MockReplicaLLM:
+    """Deterministic stand-in LLM for the offline demo.
+
+    Mirrors the ``complete(messages, max_tokens=...)`` contract of
+    ``_LLMWrapper``. Used when ``cfg.llm.provider == "mock"`` so the demo
+    can exercise the subscriber-agent path without an API key.
+    """
+    model_id = "mock-replica"
+
+    async def complete(self, messages: list[dict], max_tokens: int = 500) -> str:
+        user = next((m.get("content", "") for m in messages if m.get("role") == "user"), "")
+        q = user.strip().lower()[:400]
+        if not q:
+            return "Demo mode: ask a question about what the team shipped recently."
+        return (
+            f"Demo mode answer for {q!r}: in a real deployment this would be a "
+            "grounded summary over the artifacts in the store."
+        )
+
+
+def _build_llm(cfg: "ReplicaConfig") -> "_LLMWrapper | _MockReplicaLLM | None":
     """Build a lightweight LLM wrapper for the subscriber agent, or None."""
+    if cfg.llm.provider.lower() == "mock":
+        return _MockReplicaLLM()
     try:
         import os
         from openai import AsyncOpenAI

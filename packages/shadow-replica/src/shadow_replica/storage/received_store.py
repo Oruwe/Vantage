@@ -198,29 +198,6 @@ class ReceivedStore:
 
     # ── Read ───────────────────────────────────────────────────────────────────
 
-    def exists(self, approval_id: str) -> bool:
-        """True if an artifact with this approval_id was already received.
-
-        Checks the in-memory buffer first (rows saved during a Qdrant outage),
-        then Qdrant. A Qdrant error answers False so a receive is never
-        blocked by the lookup — that is the pre-dedupe behaviour.
-        """
-        if any(row.approval_id == approval_id for row in self._fallback):
-            return True
-        if not self._ensure_client():
-            return False
-        try:
-            points = self._client.retrieve(  # type: ignore[union-attr]
-                collection_name=_COLLECTION,
-                ids=[_to_uuid(approval_id)],
-                with_payload=False,
-                with_vectors=False,
-            )
-            return bool(points)
-        except Exception as exc:
-            logger.debug("exists() lookup failed for %s: %s", approval_id, exc)
-            return False
-
     def list_for_developer(
         self,
         developer_id: str,
@@ -365,6 +342,33 @@ class ReceivedStore:
             )
             logger.warning("Qdrant semantic_search failed: %s", exc)
             return []
+
+    def exists(self, approval_id: str) -> bool:
+        """Return True if an artifact with this approval_id has already been stored.
+
+        Used by /v1/receive to short-circuit duplicate pushes before firing
+        notifications again (a retry at the transport layer shouldn't re-alert
+        Slack/email). Checks the in-memory fallback first — rows land there
+        immediately on save when Qdrant is down — then Qdrant by point id.
+        """
+        if not approval_id:
+            return False
+        for row in self._fallback:
+            if row.approval_id == approval_id:
+                return True
+        if not self._ensure_client():
+            return False
+        try:
+            point_id = _to_uuid(approval_id)
+            found = self._client.retrieve(  # type: ignore[union-attr]
+                collection_name=_COLLECTION,
+                ids=[point_id],
+                with_payload=False,
+                with_vectors=False,
+            )
+            return bool(found)
+        except Exception:
+            return False
 
     # ── Stats ──────────────────────────────────────────────────────────────────
 
