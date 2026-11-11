@@ -198,6 +198,29 @@ class ReceivedStore:
 
     # ── Read ───────────────────────────────────────────────────────────────────
 
+    def exists(self, approval_id: str) -> bool:
+        """True if an artifact with this approval_id was already received.
+
+        Checks the in-memory buffer first (rows saved during a Qdrant outage),
+        then Qdrant. A Qdrant error answers False so a receive is never
+        blocked by the lookup — that is the pre-dedupe behaviour.
+        """
+        if any(row.approval_id == approval_id for row in self._fallback):
+            return True
+        if not self._ensure_client():
+            return False
+        try:
+            points = self._client.retrieve(  # type: ignore[union-attr]
+                collection_name=_COLLECTION,
+                ids=[_to_uuid(approval_id)],
+                with_payload=False,
+                with_vectors=False,
+            )
+            return bool(points)
+        except Exception as exc:
+            logger.debug("exists() lookup failed for %s: %s", approval_id, exc)
+            return False
+
     def list_for_developer(
         self,
         developer_id: str,

@@ -13,8 +13,20 @@ if TYPE_CHECKING:
     from shadow_replica.config import TrustedDev
 
 
-def verify_request(request: Request, body: bytes, trusted_devs: list["TrustedDev"]) -> "TrustedDev":
+def verify_request(
+    request: Request,
+    body: bytes,
+    trusted_devs: list["TrustedDev"],
+    *,
+    require_signature: bool = False,
+) -> "TrustedDev":
     """Verify the Authorization bearer token and body HMAC signature.
+
+    The signature is HMAC-SHA256 over the raw body, keyed by the same token
+    sent as the bearer: it proves the body was not altered, not that the
+    sender holds a second secret. Pass ``require_signature=True`` for
+    endpoints that accept writes (``/v1/receive``); read-only endpoints are
+    called unsigned by the ghost's collision poller.
 
     Returns the matched TrustedDev on success.
     Raises HTTPException(401) if auth fails.
@@ -35,6 +47,8 @@ def verify_request(request: Request, body: bytes, trusted_devs: list["TrustedDev
         raise HTTPException(status_code=401, detail="Unknown or revoked token")
 
     sig_header = request.headers.get("X-Vantage-Signature", "")
+    if not sig_header and require_signature:
+        raise HTTPException(status_code=401, detail="Missing body signature")
     if sig_header:
         expected_sig = "sha256=" + hmac.new(
             matched.token_value.encode(),
