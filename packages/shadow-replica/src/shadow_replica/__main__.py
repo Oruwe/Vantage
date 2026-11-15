@@ -13,11 +13,16 @@ def serve(
     host: Annotated[str, typer.Option("--host")] = "0.0.0.0",
     port: Annotated[int, typer.Option("--port")] = 7475,
     config: Annotated[str, typer.Option("--config")] = "",
+    ssl_keyfile: Annotated[str, typer.Option("--ssl-keyfile", help="TLS private key (PEM). Use with --ssl-certfile to serve HTTPS.")] = "",
+    ssl_certfile: Annotated[str, typer.Option("--ssl-certfile", help="TLS certificate (PEM). Use with --ssl-keyfile to serve HTTPS.")] = "",
 ):
     """Start the shadow-replica receiver server."""
     import uvicorn
     from shadow_replica import config as _cfg_mod
     from shadow_replica.app import build_app
+
+    tls = _tls_options(ssl_keyfile, ssl_certfile)
+    scheme = "https" if tls else "http"
 
     cfg_path = Path(config) if config else None
     cfg = _cfg_mod.load(cfg_path)
@@ -25,9 +30,16 @@ def serve(
     cfg.bind_port = port
 
     display_host = "localhost" if host in ("0.0.0.0", "127.0.0.1") else host
-    typer.echo(f"Shadow replica starting on http://{host}:{port}")
+    typer.echo(f"Shadow replica starting on {scheme}://{host}:{port}")
+    if not tls:
+        typer.echo(
+            "WARNING: serving plain HTTP. Developer tokens and approved artifacts are "
+            "unencrypted on the network. Pass --ssl-keyfile/--ssl-certfile, or put the "
+            "replica behind an HTTPS reverse proxy (e.g. Caddy).",
+            err=True,
+        )
     typer.echo(f"")
-    typer.echo(f"  Manager dashboard : http://{display_host}:{port}/")
+    typer.echo(f"  Manager dashboard : {scheme}://{display_host}:{port}/")
     typer.echo(f"  Manager token     : {cfg.manager_token}")
     typer.echo(f"")
     typer.echo(f"Trusted devs: {len(cfg.trusted_devs)}")
@@ -42,7 +54,19 @@ def serve(
     else:
         typer.echo("Notifications: none (add [[notifications]] to replica.toml to enable)")
 
-    uvicorn.run(build_app(cfg), host=host, port=port, log_level="info")
+    uvicorn.run(build_app(cfg), host=host, port=port, log_level="info", **tls)
+
+
+def _tls_options(ssl_keyfile: str, ssl_certfile: str) -> dict[str, str]:
+    """uvicorn TLS kwargs, or {} for plain HTTP. Both files or neither."""
+    if not ssl_keyfile and not ssl_certfile:
+        return {}
+    if not (ssl_keyfile and ssl_certfile):
+        raise typer.BadParameter("--ssl-keyfile and --ssl-certfile must be given together")
+    for label, value in (("--ssl-keyfile", ssl_keyfile), ("--ssl-certfile", ssl_certfile)):
+        if not Path(value).is_file():
+            raise typer.BadParameter(f"{label}: file not found: {value}")
+    return {"ssl_keyfile": ssl_keyfile, "ssl_certfile": ssl_certfile}
 
 
 @app.command("import-dev")

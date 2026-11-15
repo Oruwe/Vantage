@@ -20,8 +20,10 @@ _SSE_HEARTBEAT = 15.0
 def _require_manager(request: Request, manager_token: str, allow_query_token: bool = False) -> None:
     """Authorize a manager request.
 
-    EventSource cannot set custom headers in browsers, so for the SSE stream we
-    also accept the token as a `?token=` query param.
+    The dashboard streams with fetch() and an Authorization header. The
+    ``?token=`` query param is still accepted on the SSE stream for one
+    release (older dashboards, curl scripts) but is deprecated: a token in a
+    URL lands in access logs, proxy logs and browser history.
     """
     auth = request.headers.get("Authorization", "")
     provided = ""
@@ -29,6 +31,11 @@ def _require_manager(request: Request, manager_token: str, allow_query_token: bo
         provided = auth.removeprefix("Bearer ").strip()
     elif allow_query_token:
         provided = request.query_params.get("token", "")
+        if provided:
+            logger.warning(
+                "Manager token passed in the URL (?token=) is deprecated and will be "
+                "removed; send it as 'Authorization: Bearer <token>' instead."
+            )
     if not manager_token or not provided or not _hmac.compare_digest(provided, manager_token):
         raise HTTPException(status_code=401, detail="Invalid manager token")
 

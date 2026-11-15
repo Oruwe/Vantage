@@ -1,15 +1,45 @@
 from __future__ import annotations
 
 import json
+import logging
 import secrets
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from sqlmodel import Field, Session, SQLModel, create_engine, select
 
 from vantage.schemas import Channel, SubscriberIdentity
 
+logger = logging.getLogger(__name__)
+
 _TOKEN_PREFIX = "vsub_"
+_LOOPBACK = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
+def validate_receive_url(url: str, *, allow_insecure_http: bool = False) -> None:
+    """Refuse subscriber URLs that would send artifacts + the token in clear text.
+
+    Every push carries the bearer token and the approved artifact, so the
+    transport must be encrypted. ``https://`` is always fine; ``http://`` is
+    only fine to this same machine (local demo) unless the developer opts in.
+    """
+    parts = urlsplit(url.strip())
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        raise ValueError(f"Invalid subscriber URL {url!r}: expected https://host[:port]")
+    if parts.scheme == "https" or parts.hostname in _LOOPBACK:
+        return
+    if allow_insecure_http:
+        logger.warning(
+            "Subscriber URL %s uses plain HTTP: the token and every approved artifact "
+            "will be readable by anyone on the network path.", url,
+        )
+        return
+    raise ValueError(
+        f"Refusing plain-HTTP subscriber URL {url!r}: the token and approved artifacts "
+        "would travel unencrypted. Use https:// (see `shadow-replica serve --ssl-keyfile`), "
+        "or pass --allow-insecure-http if you accept the risk."
+    )
 
 
 class SubscriberRow(SQLModel, table=True):
@@ -52,8 +82,20 @@ class SubscriberRegistry:
         self._engine = create_engine(f"sqlite:///{db_path}", echo=False)
         SQLModel.metadata.create_all(self._engine)
 
-    def add(self, name: str, receive_url: str, channels: list[Channel]) -> SubscriberIdentity:
-        """Register a new subscriber. Returns the full identity including the generated token."""
+    def add(
+        self,
+        name: str,
+        receive_url: str,
+        channels: list[Channel],
+        *,
+        allow_insecure_http: bool = False,
+    ) -> SubscriberIdentity:
+        """Register a new subscriber. Returns the full identity including the generated token.
+
+        Raises ValueError for a URL that would push over unencrypted HTTP
+        (see validate_receive_url).
+        """
+        validate_receive_url(receive_url, allow_insecure_http=allow_insecure_http)
         sub_id = f"sub_{secrets.token_hex(6)}"
         token_plain = _TOKEN_PREFIX + secrets.token_urlsafe(32)
         channels_json = json.dumps([c.value if hasattr(c, "value") else c for c in channels])

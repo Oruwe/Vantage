@@ -133,14 +133,21 @@ Leave this terminal open. Open a **new** terminal for the next steps.
 ## 5. Pair with the manager's replica
 
 Your manager has already set up a **shadow-replica** and shared its URL
-with you — something like `http://manager-host:7475` or an HTTPS URL
-behind their reverse proxy. Confirm you have that URL before continuing.
+with you — something like `https://manager-host:7475` (the replica started
+with `--ssl-keyfile/--ssl-certfile`) or an HTTPS URL behind their reverse
+proxy. Confirm you have that URL before continuing.
 
 In the new terminal, run:
 
 ```sh
-uv run vantage-ghost pair http://manager-host:7475
+uv run vantage-ghost pair https://manager-host:7475
 ```
+
+Plain `http://` URLs to another machine are refused, because your token and
+every approved artifact would cross the network unencrypted. `http://` to
+`127.0.0.1` / `localhost` is fine for a local demo. If you knowingly accept
+the risk (e.g. a throwaway test on a trusted network), add
+`--allow-insecure-http`.
 
 The output looks like:
 
@@ -149,7 +156,7 @@ Subscriber created (sub_a1b2c3). Give the manager this code:
 
   eyJ2IjoxLCJkZXZlbG9wZXJfaWQiOiJhbGljZSIsIm5hbWUiOiJBbGljZSIs...
 
-They paste it into http://manager-host:7475/ → 'Add Developer'.
+They paste it into https://manager-host:7475/ → 'Add Developer'.
 ```
 
 Send that code to your manager via your usual channel (Slack DM, email,
