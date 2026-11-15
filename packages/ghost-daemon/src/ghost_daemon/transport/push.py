@@ -19,6 +19,11 @@ logger = logging.getLogger(__name__)
 
 _TIMEOUT = 10.0
 
+# Indirection so tests can swap the AsyncClient used *only* by push_body
+# without mutating the global ``httpx.AsyncClient`` and breaking every
+# other httpx caller in the same process.
+_AsyncClient = httpx.AsyncClient
+
 
 def _body_signature(body: bytes, token_value: str) -> str:
     """HMAC-SHA256 of body keyed with the token value."""
@@ -61,7 +66,7 @@ async def push_body(
         t0 = time.monotonic()
         outcome = "error"
         try:
-            async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            async with _AsyncClient(timeout=_TIMEOUT) as client:
                 resp = await client.post(receive_url, content=body, headers=headers)
             if resp.is_success:
                 outcome = "ok"

@@ -75,16 +75,22 @@ class _ReplicaUp:
 
 
 def _mock_httpx(push_mod, handler) -> None:
-    """Patch push_mod.httpx.AsyncClient so push() hits a MockTransport."""
+    """Patch push_mod._AsyncClient so push_body() hits a MockTransport.
+
+    The AsyncClient used by ``push_body`` is bound at module scope as
+    ``_AsyncClient`` precisely so tests can swap it without mutating the
+    global ``httpx.AsyncClient`` — which would also affect any ASGI
+    TestClient / ASGITransport running in the same loop.
+    """
     transport = httpx.MockTransport(handler)
-    orig = push_mod.httpx.AsyncClient
+    orig = push_mod._AsyncClient
 
     class _MockClient(orig):
         def __init__(self, *a, **kw):
             kw["transport"] = transport
             super().__init__(*a, **kw)
 
-    push_mod.httpx.AsyncClient = _MockClient
+    push_mod._AsyncClient = _MockClient
     return orig
 
 
@@ -162,7 +168,7 @@ def test_replica_down_then_up_retry_yields_exactly_one_artifact(
             last_error="replica down",
         )
     finally:
-        push_mod.httpx.AsyncClient = orig
+        push_mod._AsyncClient = orig
 
     # ── 2. Replica comes up. The WebSocket reconnect path flushes the queue
     #      for this subscriber immediately, bypassing backoff. ───────────────
@@ -174,7 +180,7 @@ def test_replica_down_then_up_retry_yields_exactly_one_artifact(
             assert sent is True
             outbox.mark_sent(row.id)
     finally:
-        push_mod.httpx.AsyncClient = orig
+        push_mod._AsyncClient = orig
 
     # ── 3. Promise: exactly one copy on the replica, dispatch_all once. ──────
     assert up.seen_approval_ids == [original_approval_id]

@@ -689,6 +689,7 @@ def build_app(
             "commit_report": Channel.COMMIT_REPORT,
             "standup": Channel.STANDUP,
             "pr_draft": Channel.PR_DRAFT,
+            "quick_note": Channel.QUICK_NOTE,
         }
         channel_value = channel_map.get(artifact_type, Channel.WEEKLY_DIGEST).value
         targets = subscriber_registry.subscribers_for_channel(channel_value)

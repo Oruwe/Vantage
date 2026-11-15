@@ -183,14 +183,14 @@ def _run_push_capture(outer_trace_id: str | None) -> dict:
     transport = httpx.MockTransport(handler)
 
     async def _go():
-        orig = push_mod.httpx.AsyncClient
+        orig = push_mod._AsyncClient
 
         class _MockClient(orig):
             def __init__(self, *a, **kw):
                 kw["transport"] = transport
                 super().__init__(*a, **kw)
 
-        push_mod.httpx.AsyncClient = _MockClient
+        push_mod._AsyncClient = _MockClient
         try:
             note = QuickNote(developer_id="dev-1", message="hi")
             approved = ApprovedPayload(
@@ -212,7 +212,7 @@ def _run_push_capture(outer_trace_id: str | None) -> dict:
                     return await push_mod.push(approved, sub, developer_id="dev-1")
             return await push_mod.push(approved, sub, developer_id="dev-1")
         finally:
-            push_mod.httpx.AsyncClient = orig
+            push_mod._AsyncClient = orig
 
     ok = asyncio.run(_go())
     assert ok is True
@@ -259,14 +259,14 @@ def test_push_logs_carry_trace_id_attribute() -> None:
     transport = httpx.MockTransport(ok_handler)
 
     async def _go():
-        orig = push_mod.httpx.AsyncClient
+        orig = push_mod._AsyncClient
 
         class _MockClient(orig):
             def __init__(self, *a, **kw):
                 kw["transport"] = transport
                 super().__init__(*a, **kw)
 
-        push_mod.httpx.AsyncClient = _MockClient
+        push_mod._AsyncClient = _MockClient
         try:
             note = QuickNote(developer_id="dev-1", message="hi")
             approved = ApprovedPayload(
@@ -286,7 +286,7 @@ def test_push_logs_carry_trace_id_attribute() -> None:
             with use_trace_id("logtest12345"):
                 await push_mod.push(approved, sub, developer_id="dev-1")
         finally:
-            push_mod.httpx.AsyncClient = orig
+            push_mod._AsyncClient = orig
 
     try:
         asyncio.run(_go())
