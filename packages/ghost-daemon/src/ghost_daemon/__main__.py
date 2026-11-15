@@ -60,7 +60,7 @@ def note(
     """
     from ghost_daemon import config as _cfg_mod
     from ghost_daemon.daemon import GhostDaemon
-    from ghost_daemon.transport.push import push as _push
+    from ghost_daemon.transport.push import push_body
     from vantage.schemas import ApprovalSource, DraftPayload, QuickNote
 
     cfg = _cfg_mod.load()
@@ -104,16 +104,24 @@ def note(
         typer.echo("Add --channels quick_note when running 'vantage-ghost subscribers add'.")
         return
 
+    body = approved.model_dump_json().encode("utf-8")
+
     async def _do_push():
         sent = 0
         for row in targets:
             identity = registry.to_identity(row)
-            ok = await _push(approved, identity, cfg.developer_id)
+            ok = await push_body(body, identity, cfg.developer_id)
             if ok:
                 typer.echo(f"  → {identity.name}: sent")
                 sent += 1
             else:
-                typer.echo(f"  → {identity.name}: failed", err=True)
+                typer.echo(f"  → {identity.name}: failed (queued for retry)", err=True)
+                daemon.outbox.enqueue(
+                    approval_id=approved.approval_id,
+                    subscriber_id=identity.subscriber_id,
+                    body=body,
+                    last_error="initial note push failed",
+                )
         if sent:
             await daemon.index_approved(approved)
 
@@ -125,6 +133,7 @@ def status():
     """Show daemon health: pending drafts, subscribers, session dirs, last activity."""
     import socket
     from ghost_daemon import config as _cfg_mod
+    from ghost_daemon.storage.outbox import PushOutbox
     from ghost_daemon.storage.sqlite_store import SQLiteStore
     from ghost_daemon.subscribers.registry import SubscriberRegistry
 
@@ -170,6 +179,19 @@ def status():
         typer.echo(f"  {'approved':<14} 0")
 
     typer.echo(f"  {'rejected':<14} {len(rejected)}")
+    typer.echo()
+
+    # ── Outbox (failed pushes awaiting retry) ─────────────────────────────────
+    outbox = PushOutbox(cfg.sqlite_path)
+    queued = outbox.list_all()
+    typer.echo("Outbox")
+    if not queued:
+        typer.echo(f"  {'queued':<14} 0")
+    else:
+        from collections import Counter
+        by_sub = Counter(r.subscriber_id for r in queued)
+        detail = ", ".join(f"{v} → {k}" for k, v in by_sub.items())
+        typer.echo(f"  {'queued':<14} {len(queued)}   ({detail})")
     typer.echo()
 
     # ── Subscribers ────────────────────────────────────────────────────────────
@@ -774,7 +796,7 @@ def share(
     from ghost_daemon import config as _cfg_mod
     from ghost_daemon.daemon import GhostDaemon
     from ghost_daemon.subscribers.registry import SubscriberRegistry
-    from ghost_daemon.transport.push import push as _push
+    from ghost_daemon.transport.push import push_body
     from vantage.schemas import ApprovalSource
 
     cfg = _cfg_mod.load()
@@ -811,22 +833,31 @@ def share(
             typer.echo("No active subscribers for this artifact type. Approve saved locally.")
             return
 
+    body = approved.model_dump_json().encode("utf-8")
+
     async def _do_push():
         results = []
         any_ok = False
         for sub_row in targets:
             identity = registry.to_identity(sub_row)
-            ok = await _push(approved, identity, cfg.developer_id)
+            ok = await push_body(body, identity, cfg.developer_id)
             results.append((identity.name, ok))
             if ok:
                 any_ok = True
+            else:
+                daemon.outbox.enqueue(
+                    approval_id=approved.approval_id,
+                    subscriber_id=identity.subscriber_id,
+                    body=body,
+                    last_error="initial share push failed",
+                )
         if any_ok:
             await daemon.index_approved(approved)
         return results
 
     results = asyncio.run(_do_push())
     for name, ok in results:
-        status = "OK" if ok else "FAILED"
+        status = "OK" if ok else "FAILED (queued for retry)"
         typer.echo(f"  → {name}: {status}")
 
 

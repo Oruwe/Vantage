@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from ghost_daemon.insights.edit_store import EditDiffStore
     from ghost_daemon.insights.scrubber_hits import ScrubberHitStore
     from ghost_daemon.models.registry import LLMProvider
+    from ghost_daemon.storage.outbox import PushOutbox
     from ghost_daemon.subscribers.registry import SubscriberRegistry
 
 
@@ -251,6 +252,7 @@ def build_app(
     scrubber_hits: "ScrubberHitStore | None" = None,
     edits: "EditDiffStore | None" = None,
     collisions: "CollisionPoller | None" = None,
+    outbox: "PushOutbox | None" = None,
 ) -> FastAPI:
     app = FastAPI(title="Vantage", docs_url=None, redoc_url=None)
     install_local_guard(app, cfg.ui.bind_address)
@@ -680,7 +682,7 @@ def build_app(
     # ── Internal push helper ───────────────────────────────────────────────────
 
     async def _push_to_subscribers(approved, artifact_type: str):
-        from ghost_daemon.transport.push import push
+        from ghost_daemon.transport.push import push_body
 
         channel_map = {
             "weekly_digest": Channel.WEEKLY_DIGEST,
@@ -691,10 +693,24 @@ def build_app(
         channel_value = channel_map.get(artifact_type, Channel.WEEKLY_DIGEST).value
         targets = subscriber_registry.subscribers_for_channel(channel_value)
 
+        # Serialize once so retries can reuse the exact same bytes (and
+        # therefore the exact same approval_id) — see the ApprovalPayload
+        # schema: approval_id uses default_factory=uuid4, so rebuilding from
+        # the store would break the replica's dedupe on retry.
+        body = approved.model_dump_json().encode("utf-8")
+
         for row in targets:
             identity = subscriber_registry.to_identity(row)
-            ok = await push(approved, identity, cfg.developer_id)
-            if not ok:
-                logger.warning("Push to %s (%s) failed", row.name, row.id)
+            ok = await push_body(body, identity, cfg.developer_id)
+            if ok:
+                continue
+            logger.warning("Push to %s (%s) failed", row.name, row.id)
+            if outbox is not None:
+                outbox.enqueue(
+                    approval_id=approved.approval_id,
+                    subscriber_id=identity.subscriber_id,
+                    body=body,
+                    last_error="initial push failed",
+                )
 
     return app

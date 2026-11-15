@@ -28,7 +28,10 @@
       "PowerShell(\\(Get-Content C:\\\\oruwe\\\\Ganni\\\\Vantage\\\\packages\\\\shadow-replica\\\\src\\\\shadow_replica\\\\static\\\\index.html | Measure-Object -Line\\).Lines)",
       "PowerShell(gh run *)",
       "PowerShell(New-Item *)",
-      "PowerShell(\\(Get-Content packages/shadow-replica/src/shadow_replica/static/index.html | Measure-Object -Line\\).Lines)"
+      "PowerShell(\\(Get-Content packages/shadow-replica/src/shadow_replica/static/index.html | Measure-Object -Line\\).Lines)",
+      "Bash(GROQ_API_KEY=x ANTHROPIC_API_KEY=x uv run pytest tests/test_push_outbox.py -q)",
+      "Bash(GROQ_API_KEY=x ANTHROPIC_API_KEY=x uv run pytest tests/ -q)",
+      "Bash(git *)"
     ]
   }
 }

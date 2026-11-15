@@ -27,17 +27,18 @@ def _body_signature(body: bytes, token_value: str) -> str:
     return f"sha256={sig}"
 
 
-async def push(
-    approved: ApprovedPayload,
+async def push_body(
+    body: bytes,
     subscriber: SubscriberIdentity,
     developer_id: str,
 ) -> bool:
-    """POST an approved artifact to a subscriber's receive endpoint.
+    """POST a pre-serialized ApprovedPayload body to a subscriber's receive endpoint.
+
+    Retries reuse this directly so the exact same bytes (and therefore the exact
+    same approval_id and HMAC signature) go on the wire as the first attempt.
 
     Returns True on success (2xx), False on any error.
-    Logs failures but does not raise — callers should not be blocked by push failures.
     """
-    body = approved.model_dump_json().encode()
     sig = _body_signature(body, subscriber.token_value)
 
     # Reuse an inherited trace_id (e.g. from an inbound UI request) when present;
@@ -65,8 +66,7 @@ async def push(
             if resp.is_success:
                 outcome = "ok"
                 logger.info(
-                    "Pushed %s to subscriber %s (%s) — %d",
-                    approved.approval_id,
+                    "Pushed to subscriber %s (%s) — %d",
                     subscriber.name,
                     subscriber.subscriber_id,
                     resp.status_code,
@@ -100,3 +100,18 @@ async def push(
                 subscriber=sub_label, outcome=outcome,
             ).observe(elapsed)
             ghost_pushes_total.labels(subscriber=sub_label, outcome=outcome).inc()
+
+
+async def push(
+    approved: ApprovedPayload,
+    subscriber: SubscriberIdentity,
+    developer_id: str,
+) -> bool:
+    """POST an approved artifact to a subscriber's receive endpoint.
+
+    Returns True on success (2xx), False on any error. Internally serializes
+    once; callers that need to retry later should keep the serialized bytes and
+    use ``push_body`` so the retry sends byte-identical content.
+    """
+    body = approved.model_dump_json().encode()
+    return await push_body(body, subscriber, developer_id)

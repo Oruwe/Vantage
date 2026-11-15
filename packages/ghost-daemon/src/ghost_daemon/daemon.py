@@ -79,6 +79,7 @@ from ghost_daemon.insights.collision_poller import CollisionPoller
 from ghost_daemon.insights.edit_store import EditDiffStore
 from ghost_daemon.insights.scrubber_hits import ScrubberHitStore
 from ghost_daemon.models.registry import build_from_config
+from ghost_daemon.storage.outbox import PushOutbox
 from ghost_daemon.storage.sqlite_store import SQLiteStore
 from ghost_daemon.storage.qdrant_store import QdrantStore
 from ghost_daemon.subscribers.registry import SubscriberRegistry
@@ -135,6 +136,7 @@ class GhostDaemon:
         register_hit_sink(self.scrubber_hits.record_context)
         self.gate = ApprovalGate(self.store, cfg.developer_id, edits=self.edits)
         self.subscriber_registry = SubscriberRegistry(cfg.sqlite_path)
+        self.outbox = PushOutbox(cfg.sqlite_path)
         self.pairing_status = PairingStatus()
         self.collisions = CollisionPoller(
             subscribers=self.subscriber_registry,
@@ -147,6 +149,7 @@ class GhostDaemon:
             scrubber_hits=self.scrubber_hits,
             edits=self.edits,
             collisions=self.collisions,
+            outbox=self.outbox,
         )
 
     async def start(self) -> None:
@@ -181,6 +184,17 @@ class GhostDaemon:
 
                 def _on_connect(sid=identity.subscriber_id):
                     self.pairing_status.mark_connected(sid)
+                    # The replica just came back. Flush anything queued for it
+                    # without waiting for the 30s–30min backoff clock.
+                    try:
+                        asyncio.create_task(
+                            self.flush_outbox_for_subscriber(sid),
+                            name=f"outbox_flush:{sid}",
+                        )
+                    except RuntimeError:
+                        # No running loop (shouldn't happen inside the WS
+                        # client, but belt-and-suspenders): drop silently.
+                        pass
 
                 def _on_disconnect(err="", sid=identity.subscriber_id):
                     self.pairing_status.mark_disconnected(sid, err)
@@ -209,6 +223,9 @@ class GhostDaemon:
 
         tasks.append(asyncio.create_task(self._dejavu_scan_loop(), name="dejavu_scan"))
         logger.info("Deja-Vu scanner started")
+
+        tasks.append(asyncio.create_task(self._outbox_retry_loop(), name="outbox_retry"))
+        logger.info("Outbox retry worker started")
 
         config = uvicorn.Config(
             app=self._app,
@@ -246,6 +263,83 @@ class GhostDaemon:
 
     def get_app(self):
         return self._app
+
+    async def _retry_outbox_row(self, row) -> None:
+        """Attempt one retry for a single outbox row. Deletes on 2xx, bumps
+        attempts on failure, drops after MAX_AGE with a warning.
+        """
+        from ghost_daemon.transport.push import push_body
+
+        if self.outbox.is_expired(row):
+            logger.warning(
+                "Dropping outbox row %s (approval_id=%s, subscriber=%s): "
+                "older than retention window (%d attempts, last_error=%s)",
+                row.id, row.approval_id, row.subscriber_id,
+                row.attempts, row.last_error[:80],
+            )
+            self.outbox.drop_row(row.id)
+            return
+
+        sub_row = self.subscriber_registry.get(row.subscriber_id)
+        if sub_row is None or sub_row.revoked_at:
+            # Subscriber vanished — don't keep retrying forever.
+            logger.info(
+                "Dropping outbox row %s: subscriber %s revoked or missing",
+                row.id, row.subscriber_id,
+            )
+            self.outbox.drop_row(row.id)
+            return
+
+        identity = self.subscriber_registry.to_identity(sub_row)
+        body = row.body_json.encode("utf-8")
+        ok = await push_body(body, identity, self.cfg.developer_id)
+        if ok:
+            self.outbox.mark_sent(row.id)
+        else:
+            self.outbox.mark_failed(row.id, error="retry failed")
+
+    async def flush_outbox_for_subscriber(self, subscriber_id: str) -> None:
+        """Retry every queued row for one subscriber, ignoring backoff.
+
+        Called from the WSClient on_connect callback: if the subscriber is
+        reachable again we don't want the dev waiting out 30 minutes before
+        the retry fires.
+        """
+        rows = self.outbox.list_due_for_subscriber(subscriber_id)
+        if not rows:
+            return
+        logger.info(
+            "Flushing %d outbox row(s) for subscriber %s on reconnect",
+            len(rows), subscriber_id,
+        )
+        for row in rows:
+            try:
+                await self._retry_outbox_row(row)
+            except Exception as exc:
+                logger.debug("Outbox flush blip for row %s: %s", row.id, exc)
+
+    async def _outbox_retry_loop(self) -> None:
+        """Periodically drain due outbox rows.
+
+        Wakes every 30s to match the first backoff step, so a failure can be
+        retried as soon as it's eligible.
+        """
+        interval_s = 30
+        while True:
+            try:
+                await asyncio.sleep(interval_s)
+                due = self.outbox.list_due()
+                if not due:
+                    continue
+                for row in due:
+                    try:
+                        await self._retry_outbox_row(row)
+                    except Exception as exc:
+                        logger.debug("Outbox retry blip for row %s: %s", row.id, exc)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.debug("Outbox loop blip: %s", exc)
 
     async def _dejavu_scan_loop(self) -> None:
         """Every 15 minutes, scan recent session turns for struggle-then-success
