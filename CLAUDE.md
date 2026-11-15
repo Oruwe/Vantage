@@ -65,10 +65,12 @@ uv run shadow-replica serve
 uv run shadow-replica serve --ssl-keyfile key.pem --ssl-certfile cert.pem   # HTTPS (recommended)
 ```
 
-**Pair a trusted developer (manager side; interactive pairing-code flow):**
+**Register a trusted developer from the CLI (manager side):**
 ```
-uv run shadow-replica import-dev
+uv run shadow-replica import-dev <developer-id> --token <vsub_...> [--name Alice] [--subscriber-id <sub-id>]
+uv run shadow-replica import-dev alice            # --token is prompted if omitted
 ```
+Takes the subscriber token the developer gave you. This is separate from the one-string pairing code produced by `vantage-ghost pair` — that code is pasted into the dashboard's "Add Developer" dialog, not this CLI.
 
 **Manager CLI (no server required):**
 ```
@@ -155,11 +157,13 @@ The static SPA (`static/index.html`) is a single-file vanilla JS app served at `
 
 **`SubscriberAgent`** (`agent/subscriber_agent.py`) — Answers natural-language queries over stored artifacts using semantic search + optional LLM synthesis. Called by `/ui/api/query` and `/v1/agent/query`.
 
-**`ManagerAgent`** (`agent/manager_agent.py`) — Tool-calling investigation agent used by the dashboard chat UI and `employer-voice`. Streams over SSE from `/ui/api/chat`. Owns ~10 tools spanning timeline reads, initiatives, threads, collisions, resolutions, GitHub events, and two "dangerous" tools (`probe_live`, `ask_dev`) gated behind manager approval — the stream pauses on an approval prompt and resumes on a `/ui/api/chat/approve` POST. Chat history lives in `ChatMemory` (`agent/chat_memory.py`).
+**`ManagerAgent`** (`agent/manager_agent.py`) — Tool-calling investigation agent used by the dashboard chat UI and `employer-voice`. SSE stream is `POST /ui/api/chat/stream`; `POST /ui/api/chat` is the non-streaming JSON variant. Owns ~10 tools spanning timeline reads, initiatives, threads, collisions, resolutions, GitHub events, and two "dangerous" tools (`probe_live`, `ask_dev`) gated behind manager approval — the stream pauses on an approval prompt and resumes on a `/ui/api/chat/approve` POST. Chat history lives in `ChatMemory` (`agent/chat_memory.py`).
 
 **`WiretapBus`** (`wiretap/bus.py`) — in-process pub/sub for A2A envelopes. The receive handler publishes `ARTIFACT_PUSH` events here; the dashboard and manager agent subscribe for live activity feeds. SSE endpoint: `/ui/api/wiretap/stream`.
 
-**`CollisionDetector`** (`collision/detector.py`) — pairwise cosine on artifact embeddings to flag cross-file semantic overlaps between developers. Surfaces in the dashboard Brief and in the manager agent's `find_collisions` tool.
+**`CollisionDetector`** (`collision/detector.py`) — live intent-beacon detector. Keeps the latest `IntentBeacon` per developer in a 5-minute sliding window and, on each new beacon, computes a Jaccard overlap of `files_touched` against every other recent beacon in the same repo. Pairs that clear the threshold (default 0.4, ≥1 shared file) produce a `CollisionCandidate`, which the WS hub broadcasts as a `COLLISION_ALERT` envelope. A 3-minute per-pair cooldown suppresses re-fires.
+
+**`SemanticCollisionDetector`** (`collision/semantic.py`) — offline embedding-based radar. `scan_recent()` pulls recent artifacts with vectors from `ReceivedStore` and does Python-level pairwise cosine; hits need either any file overlap or cosine ≥ 0.82 with ≥2 shared salient terms. Deduplicates to the best artifact pair per developer-pair. Surfaces in the dashboard Brief and in the manager agent's `find_collisions` tool.
 
 **`WSHub`** (`connections/ws_hub.py`) — Tracks live WebSocket connections from developer daemons; used by the manager to probe a developer's current session status in real time.
 
