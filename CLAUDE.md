@@ -163,7 +163,7 @@ The static SPA (`static/index.html`) is a single-file vanilla JS app served at `
 
 **`CollisionDetector`** (`collision/detector.py`) — live intent-beacon detector. Keeps the latest `IntentBeacon` per developer in a 5-minute sliding window and, on each new beacon, computes a Jaccard overlap of `files_touched` against every other recent beacon in the same repo. Pairs that clear the threshold (default 0.4, ≥1 shared file) produce a `CollisionCandidate`, which the WS hub broadcasts as a `COLLISION_ALERT` envelope. A 3-minute per-pair cooldown suppresses re-fires.
 
-**`SemanticCollisionDetector`** (`collision/semantic.py`) — offline embedding-based radar. `scan_recent()` pulls recent artifacts with vectors from `ReceivedStore` and does Python-level pairwise cosine; hits need either any file overlap or cosine ≥ 0.82 with ≥2 shared salient terms. Deduplicates to the best artifact pair per developer-pair. Surfaces in the dashboard Brief and in the manager agent's `find_collisions` tool.
+**`SemanticCollisionDetector`** (`collision/semantic.py`) — offline embedding-based radar. `scan_recent()` pulls recent artifacts with vectors from `ReceivedStore` and does Python-level pairwise cosine; hits need either any file overlap or cosine ≥ 0.82 with ≥2 shared salient terms. Deduplicates to the best artifact pair per developer-pair. Surfaces in the dashboard Brief and in the manager agent's `get_collisions` tool.
 
 **`WSHub`** (`connections/ws_hub.py`) — Tracks live WebSocket connections from developer daemons; used by the manager to probe a developer's current session status in real time.
 
