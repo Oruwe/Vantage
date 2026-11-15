@@ -257,6 +257,20 @@ def build_app(
     app = FastAPI(title="Vantage", docs_url=None, redoc_url=None)
     install_local_guard(app, cfg.ui.bind_address)
 
+    # Strong refs for fire-and-forget tasks the approve route schedules.
+    # asyncio.create_task only keeps a weak loop ref — without this set a
+    # mid-flight GC could drop the push or the Qdrant index, and the
+    # approval would silently leave no trace on the replica or the
+    # local vector store.
+    background_tasks: set[asyncio.Task] = set()
+    app.state._background_tasks = background_tasks
+
+    def _spawn(coro, *, name: str | None = None) -> asyncio.Task:
+        task = asyncio.create_task(coro, name=name)
+        background_tasks.add(task)
+        task.add_done_callback(background_tasks.discard)
+        return task
+
     @app.exception_handler(Exception)
     async def _debug_handler(request: Request, exc: Exception):
         # Log the full traceback for operators; show the user only a short
@@ -387,9 +401,15 @@ def build_app(
         edited = json.loads(edited_json) if edited_json.strip() else None
         try:
             approved = gate.approve(draft_id, edited_payload=edited, source=ApprovalSource.MANUAL)
-            asyncio.create_task(_push_to_subscribers(approved, approved.artifact_type))
+            _spawn(
+                _push_to_subscribers(approved, approved.artifact_type),
+                name=f"push_subscribers:{approved.approval_id}",
+            )
             if qdrant is not None and llm is not None:
-                asyncio.create_task(_index_in_qdrant(approved))
+                _spawn(
+                    _index_in_qdrant(approved),
+                    name=f"index_qdrant:{approved.approval_id}",
+                )
         except Exception as exc:
             logger.error("Approve failed: %s", exc)
         return RedirectResponse("/", status_code=303)
