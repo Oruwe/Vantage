@@ -360,6 +360,67 @@ def test_outbox_retry_logs_exception_at_warning_with_row_id(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# approve_draft fires background tasks with strong references
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_approve_route_tracks_background_tasks_until_done(tmp_path, monkeypatch):
+    """The UI approve route schedules fire-and-forget tasks for
+    ``_push_to_subscribers`` and ``_index_in_qdrant``. ``asyncio.create_task``
+    only gets a *weak* loop ref — the daemon must keep a strong one until
+    the task finishes, otherwise a mid-execution GC can drop the push and
+    the approval would neither reach the subscribers nor land in the outbox.
+    """
+    from vantage.schemas import Channel
+
+    daemon, cfg = _build_daemon(tmp_path, monkeypatch)
+    _add_subscriber(daemon, channels=[Channel.WEEKLY_DIGEST])
+
+    app = daemon.get_app()
+    assert hasattr(app.state, "_background_tasks"), (
+        "FastAPI app must track approve-route background tasks"
+    )
+    assert app.state._background_tasks == set()
+
+    gate_evt = asyncio.Event()
+    calls = {"push": 0}
+
+    async def _blocking_push_body(body, sub, developer_id):
+        calls["push"] += 1
+        await gate_evt.wait()
+        return True
+
+    monkeypatch.setattr(
+        "ghost_daemon.transport.push.push_body", _blocking_push_body,
+    )
+
+    draft_id = _submit_digest_draft(daemon, cfg)
+
+    async def _run():
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as ghost_client:
+            r = await ghost_client.post(
+                f"/draft/{draft_id}/approve", data={"edited_json": ""},
+            )
+            assert r.status_code == 303, r.text
+
+            # Give the newly scheduled tasks a tick to start.
+            await _wait_until(
+                lambda: len(app.state._background_tasks) >= 1, timeout=2.0,
+            )
+            assert calls["push"] == 1
+
+            # Release the blocking push; the done-callback discards from the set.
+            gate_evt.set()
+            await _wait_until(
+                lambda: len(app.state._background_tasks) == 0, timeout=2.0,
+            )
+
+    asyncio.run(_run())
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Fix 4 — _on_connect flush task has a strong reference
 # ─────────────────────────────────────────────────────────────────────────────
 
