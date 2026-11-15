@@ -151,6 +151,11 @@ class GhostDaemon:
             collisions=self.collisions,
             outbox=self.outbox,
         )
+        # Strong references for the fire-and-forget outbox-flush tasks the
+        # WS client kicks off on reconnect. ``asyncio.create_task`` only
+        # keeps a weak ref in the loop, so without this set the GC could
+        # drop a mid-flight flush and the retry would silently vanish.
+        self._on_connect_tasks: set[asyncio.Task] = set()
 
     async def start(self) -> None:
         self.cfg.state_dir.mkdir(parents=True, exist_ok=True)
@@ -182,20 +187,6 @@ class GhostDaemon:
                 identity = self.subscriber_registry.to_identity(row)
                 self.pairing_status.register(identity.subscriber_id, identity.name)
 
-                def _on_connect(sid=identity.subscriber_id):
-                    self.pairing_status.mark_connected(sid)
-                    # The replica just came back. Flush anything queued for it
-                    # without waiting for the 30s–30min backoff clock.
-                    try:
-                        asyncio.create_task(
-                            self.flush_outbox_for_subscriber(sid),
-                            name=f"outbox_flush:{sid}",
-                        )
-                    except RuntimeError:
-                        # No running loop (shouldn't happen inside the WS
-                        # client, but belt-and-suspenders): drop silently.
-                        pass
-
                 def _on_disconnect(err="", sid=identity.subscriber_id):
                     self.pairing_status.mark_disconnected(sid, err)
 
@@ -203,7 +194,7 @@ class GhostDaemon:
                     identity, self.cfg.developer_id, machine_id,
                     probe_agent, discovery_agent=discovery_agent,
                     tailer=self.tailer, cfg=self.cfg,
-                    on_connect=_on_connect,
+                    on_connect=self._make_on_connect(identity.subscriber_id),
                     on_disconnect=_on_disconnect,
                 )
                 tasks.append(asyncio.create_task(
@@ -316,7 +307,20 @@ class GhostDaemon:
             try:
                 await self._retry_outbox_row(row)
             except Exception as exc:
-                logger.debug("Outbox flush blip for row %s: %s", row.id, exc)
+                logger.warning("Outbox flush blip for row %s: %s", row.id, exc)
+
+    async def _drain_outbox_once(self) -> None:
+        """One pass over ``outbox.list_due()``. Extracted from the retry loop
+        so tests can drive the drain logic deterministically.
+        """
+        due = self.outbox.list_due()
+        if not due:
+            return
+        for row in due:
+            try:
+                await self._retry_outbox_row(row)
+            except Exception as exc:
+                logger.warning("Outbox retry blip for row %s: %s", row.id, exc)
 
     async def _outbox_retry_loop(self) -> None:
         """Periodically drain due outbox rows.
@@ -328,18 +332,38 @@ class GhostDaemon:
         while True:
             try:
                 await asyncio.sleep(interval_s)
-                due = self.outbox.list_due()
-                if not due:
-                    continue
-                for row in due:
-                    try:
-                        await self._retry_outbox_row(row)
-                    except Exception as exc:
-                        logger.debug("Outbox retry blip for row %s: %s", row.id, exc)
+                await self._drain_outbox_once()
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                logger.debug("Outbox loop blip: %s", exc)
+                logger.warning("Outbox loop blip: %s", exc)
+
+    def _make_on_connect(self, sid: str):
+        """Build the WS client's on-connect callback for one subscriber id.
+
+        The flush task is tracked in ``self._on_connect_tasks`` and removed
+        via ``add_done_callback`` so the event loop keeps a strong ref
+        until the flush is actually finished. Without this the asyncio GC
+        could reap the task mid-flight (the loop holds only weak refs to
+        tasks it wasn't awaited on) and the reconnect-drain would silently
+        disappear.
+        """
+        def _on_connect() -> None:
+            self.pairing_status.mark_connected(sid)
+            # The replica just came back. Flush anything queued for it
+            # without waiting for the 30s–30min backoff clock.
+            try:
+                task = asyncio.create_task(
+                    self.flush_outbox_for_subscriber(sid),
+                    name=f"outbox_flush:{sid}",
+                )
+            except RuntimeError:
+                # No running loop — drop silently.
+                return
+            self._on_connect_tasks.add(task)
+            task.add_done_callback(self._on_connect_tasks.discard)
+
+        return _on_connect
 
     async def _dejavu_scan_loop(self) -> None:
         """Every 15 minutes, scan recent session turns for struggle-then-success

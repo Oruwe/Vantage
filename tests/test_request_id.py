@@ -175,14 +175,14 @@ def test_ghost_push_sends_x_request_id() -> None:
     async def _go():
         # push() instantiates its own AsyncClient. Swap it out for one bound
         # to our MockTransport so the request body hits the handler above.
-        orig = push_mod.httpx.AsyncClient
+        orig = push_mod._AsyncClient
 
         class _MockClient(orig):
             def __init__(self, *a, **kw):
                 kw["transport"] = transport
                 super().__init__(*a, **kw)
 
-        push_mod.httpx.AsyncClient = _MockClient
+        push_mod._AsyncClient = _MockClient
         try:
             note = QuickNote(developer_id="dev-1", message="hi")
             approved = ApprovedPayload(
@@ -201,7 +201,7 @@ def test_ghost_push_sends_x_request_id() -> None:
             )
             return await push_mod.push(approved, sub, developer_id="dev-1")
         finally:
-            push_mod.httpx.AsyncClient = orig
+            push_mod._AsyncClient = orig
 
     ok = asyncio.run(_go())
     assert ok is True

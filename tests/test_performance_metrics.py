@@ -337,14 +337,14 @@ def test_ghost_push_records_metrics() -> None:
     transport = httpx.MockTransport(handler)
 
     async def _go():
-        orig = push_mod.httpx.AsyncClient
+        orig = push_mod._AsyncClient
 
         class _MockClient(orig):
             def __init__(self, *a, **kw):
                 kw["transport"] = transport
                 super().__init__(*a, **kw)
 
-        push_mod.httpx.AsyncClient = _MockClient
+        push_mod._AsyncClient = _MockClient
         try:
             note = QuickNote(developer_id="dev-perf", message="hi")
             approved = ApprovedPayload(
@@ -363,7 +363,7 @@ def test_ghost_push_records_metrics() -> None:
             )
             return await push_mod.push(approved, sub, developer_id="dev-perf")
         finally:
-            push_mod.httpx.AsyncClient = orig
+            push_mod._AsyncClient = orig
 
     before = _counter_sum(gm.ghost_pushes_total, subscriber="sub-perf", outcome="ok")
     ok = asyncio.run(_go())
