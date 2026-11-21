@@ -124,8 +124,13 @@ Full command list and architecture notes in [CLAUDE.md](CLAUDE.md).
 - Push is HMAC-SHA256 over the request body, keyed by a per-subscriber token.
 - Local UI is bound to `127.0.0.1` with Host- and Origin-header guards against
   DNS rebinding and off-origin browser POSTs.
-- Tokens, draft payloads, and audit entries are AES-GCM encrypted at rest.
-- Secret scrubbing happens on the input to every LLM call and at every push.
+- Subscriber bearer tokens are AES-GCM encrypted at rest; the data-key lives in
+  the OS keychain. Draft payloads in SQLite and the audit log on disk are
+  **not** encrypted — they rely on the OS user account for confidentiality.
+- Secret scrubbing runs at two points: on every session excerpt before it
+  reaches the LLM, and again on the final payload at approval (so an
+  LLM-hallucinated or pasted-in secret still gets caught before it leaves
+  the gate).
 
 The full threat model, what Vantage does **not** yet protect against, and the
 V2 pairing-time HMAC-key plan live in [docs/SECURITY.md](docs/SECURITY.md).

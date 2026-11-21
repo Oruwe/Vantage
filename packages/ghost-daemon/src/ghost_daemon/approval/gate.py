@@ -10,6 +10,7 @@ from vantage.schemas import (
     PRDraft, QuickNote, StandupBullets, WeeklyDigest,
 )
 from ghost_daemon.insights.edit_store import EditDiffStore, compute_diff
+from ghost_daemon.redaction.scrubber import scrub_payload
 from ghost_daemon.storage.sqlite_store import SQLiteStore
 
 logger = logging.getLogger(__name__)
@@ -85,6 +86,18 @@ class ApprovalGate:
                     self._edits.record(diff)
             except Exception as exc:
                 logger.debug("edit-diff capture skipped: %s", exc)
+
+        # Defense-in-depth: re-scrub the final payload before it leaves the
+        # gate. Catches LLM-hallucinated secret shapes and anything a dev
+        # pasted into an edit between draft and approval.
+        final_data, late_redactions = scrub_payload(final_data)
+        if late_redactions:
+            logger.warning(
+                "Approval scrubber caught %d secret(s) in draft %s: %s",
+                len(late_redactions),
+                draft_id,
+                sorted({r.kind for r in late_redactions}),
+            )
 
         payload = _deserialise(row.artifact_type, final_data)
 

@@ -154,3 +154,29 @@ def scrub_turns(turns: list[dict]) -> list[dict]:
             turn = {**turn, "content_excerpt": ctx.scrubbed_text}
         out.append(turn)
     return out
+
+
+def scrub_payload(obj):
+    """Recursively scrub every string leaf of a dict/list/scalar structure.
+
+    Returns ``(scrubbed, redactions)`` — the scrubbed structure (same shape)
+    and a flat list of every Redaction encountered. Used as a defense-in-depth
+    pass on draft payloads at approval time: catches LLM-hallucinated secret
+    shapes and anything a developer pasted into an edit before approving.
+    """
+    redactions: list[Redaction] = []
+
+    def _walk(value):
+        if isinstance(value, str):
+            if not value:
+                return value
+            ctx = scrub(value)
+            redactions.extend(ctx.redactions)
+            return ctx.scrubbed_text
+        if isinstance(value, list):
+            return [_walk(v) for v in value]
+        if isinstance(value, dict):
+            return {k: _walk(v) for k, v in value.items()}
+        return value
+
+    return _walk(obj), redactions

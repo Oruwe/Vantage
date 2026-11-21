@@ -1,4 +1,4 @@
-from ghost_daemon.redaction.scrubber import scrub
+from ghost_daemon.redaction.scrubber import scrub, scrub_payload
 
 # Valid AWS access key: AKIA + exactly 16 uppercase alphanumeric chars
 _AWS_KEY = "AKIAIOSFODNN7EXAMPLE"
@@ -71,3 +71,49 @@ def test_entropy_bypass_for_lockfile():
 def test_file_path_recorded():
     ctx = scrub("hello world", file_path="src/main.py")
     assert ctx.file_path == "src/main.py"
+
+
+def test_scrub_payload_walks_nested_strings():
+    payload = {
+        "summary": f"deploy with {_AWS_KEY}",
+        "bullets": ["fine line", f"paste accident: {_GH_TOKEN}"],
+        "meta": {"token": _ANTHROPIC_KEY, "count": 3, "ok": True},
+    }
+    scrubbed, redactions = scrub_payload(payload)
+
+    kinds = {r.kind for r in redactions}
+    assert {"aws_access_key", "github_token", "anthropic_key"} <= kinds
+    # Original secrets must be gone from every leaf.
+    flat = repr(scrubbed)
+    assert _AWS_KEY not in flat
+    assert _GH_TOKEN not in flat
+    assert _ANTHROPIC_KEY not in flat
+    # Non-string leaves are preserved untouched.
+    assert scrubbed["meta"]["count"] == 3
+    assert scrubbed["meta"]["ok"] is True
+
+
+def test_approval_gate_rescrubs_edited_payload(tmp_path):
+    from ghost_daemon.approval.gate import ApprovalGate
+    from ghost_daemon.storage.sqlite_store import SQLiteStore
+    from vantage.schemas import DraftPayload, QuickNote
+
+    store = SQLiteStore(tmp_path / "vantage.db")
+    gate = ApprovalGate(store, "alice")
+
+    clean = DraftPayload(
+        draft_id="d1",
+        artifact_type="quick_note",
+        developer_id="alice",
+        payload=QuickNote(message="shipped auth refactor"),
+    )
+    gate.submit(clean)
+
+    # Dev edits the draft and (accidentally) pastes a secret before approving.
+    approved = gate.approve(
+        "d1",
+        edited_payload={"message": f"shipped with key {_AWS_KEY}"},
+    )
+
+    assert _AWS_KEY not in approved.payload.message
+    assert "[REDACTED:aws_access_key" in approved.payload.message
