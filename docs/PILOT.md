@@ -179,17 +179,18 @@ Overall: `totals`, `pending`, `scrubber_hits.total`, `scrubber_hits.by_kind`.
 
 ### 7.3 Host: combine the data
 
-One row per person per window:
+Drop everyone's `pilot-stats-P*.json` files into `./pilot-data/` and run:
 
-| person | window_end | drafts_created | approved | rejected | approved_with_edit | edit_rate | approval_rate |
-|---|---|---|---|---|---|---|---|
+```bash
+uv run python scripts/pilot_report.py --input ./pilot-data \
+    --out ./pilot-results --survey ./pilot-data/survey.csv
+```
 
-One row per person for overall numbers and the survey:
+That writes `pilot-results.md` (H1–H4 verdicts + per-person and per-window
+tables), `pilot-results.csv` (same data, Sheet-ready), and
+`pilot-edit-rate.png` if matplotlib is installed. The survey CSV columns are
+`person,minutes_saved,keep_using,felt_watched,draft_quality`.
 
-| person | approval_rate (total) | edit_rate first → last | scrubber_total | pending | minutes_saved | keep_using | felt_watched | draft_quality |
-|---|---|---|---|---|---|---|---|---|
-
-Then fill in section 2's table: for each H1–H4, the value and whether it passed.
 Report misses alongside passes, and say which ones you'd change and why.
 
 ---
