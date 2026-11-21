@@ -281,7 +281,7 @@ def demo(
     replica_port: Annotated[int, typer.Option("--replica-port")] = 7475,
     keep: Annotated[bool, typer.Option("--keep/--fresh", help="Reuse existing demo state instead of wiping it.")] = False,
 ):
-    """Offline demo: seed configs + sessions, pair ghost ↔ replica, run both.
+    """Offline demo: seed configs + sessions, pair ghost <-> replica, run both.
 
     No internet, no Qdrant, no Ollama, no API keys. The seeded session
     contains a planted fake AWS key so the X-Ray view has something to show.
@@ -1833,6 +1833,12 @@ def _ensure_ui_running(cfg) -> None:
 
 
 def main():
+    import sys
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError):
+            pass
     app()
 
 

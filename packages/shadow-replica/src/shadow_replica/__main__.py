@@ -243,6 +243,12 @@ def replica_query(
 
 
 def main():
+    import sys
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError):
+            pass
     app()
 
 

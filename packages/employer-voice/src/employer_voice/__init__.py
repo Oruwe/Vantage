@@ -9,6 +9,12 @@ from employer_voice.cli import app
 
 
 def main() -> None:
+    import sys
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError):
+            pass
     app()
 
 
