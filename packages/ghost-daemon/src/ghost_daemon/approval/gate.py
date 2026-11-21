@@ -55,49 +55,76 @@ class ApprovalGate:
         edited_payload: Any | None = None,
         source: ApprovalSource = ApprovalSource.MANUAL,
     ) -> ApprovedPayload:
-        """Approve a pending draft and return a typed ApprovedPayload."""
+        """Approve a pending draft and return a typed ApprovedPayload.
+
+        Scrubbing happens first — before the DB write, before the edit-diff
+        capture, before the ApprovedPayload is constructed. Any secret shape
+        the developer pasted into an edit (or an LLM hallucinated into the
+        original draft) is placeholder'd *everywhere* it could leak from:
+        the SQLite row read by ``get_approved()`` + ``vantage-ghost share``,
+        the JSONL edit-diff shard read by the few-shot selector, and the
+        ApprovedPayload returned to the caller.
+        """
         row = self._store.get_draft(draft_id)
         if row is None:
             raise KeyError(f"Draft {draft_id!r} not found")
         if row.status == "approved":
             raise ValueError(f"Draft {draft_id!r} is already approved")
 
-        self._store.approve(draft_id, edited_payload, source.value)
+        # Parse both sides up front. The original is always a JSON string
+        # (serialised in submit()); the edit may be a dict, model, or string.
+        original_data = json.loads(row.payload_json)
+        edited_data: Any | None = None
+        if edited_payload is not None:
+            if isinstance(edited_payload, str):
+                edited_data = json.loads(edited_payload)
+            elif hasattr(edited_payload, "model_dump"):
+                edited_data = edited_payload.model_dump(mode="json")
+            else:
+                edited_data = edited_payload
 
-        final_json = edited_payload if edited_payload is not None else row.payload_json
-        if isinstance(final_json, str):
-            final_data = json.loads(final_json)
+        # SECURITY: scrub BOTH sides before anything downstream sees them.
+        # If we scrubbed only on return, the SQLite row and the edit-diff
+        # shard would retain the raw secret, and get_approved() + the
+        # few-shot selector would later surface it to the manager and LLM.
+        scrubbed_original, orig_hits = scrub_payload(original_data)
+        if edited_data is not None:
+            scrubbed_edited, edit_hits = scrub_payload(edited_data)
         else:
-            final_data = final_json
+            scrubbed_edited, edit_hits = None, []
 
-        # Record the edit-diff when the dev actually changed something before
-        # approving. Never fails loud — a broken insight write must not block
-        # the approval path.
-        if self._edits is not None and edited_payload is not None:
+        all_hits = list(orig_hits) + list(edit_hits)
+        if all_hits:
+            logger.warning(
+                "Approval scrubber caught %d secret(s) in draft %s: %s",
+                len(all_hits),
+                draft_id,
+                sorted({r.kind for r in all_hits}),
+            )
+
+        # Persist the scrubbed edited payload, not the raw one.
+        store_payload = (
+            json.dumps(scrubbed_edited) if scrubbed_edited is not None else None
+        )
+        self._store.approve(draft_id, store_payload, source.value)
+
+        final_data = scrubbed_edited if scrubbed_edited is not None else scrubbed_original
+
+        # Record the edit-diff from scrubbed inputs on both sides. Never
+        # fails loud — a broken insight write must not block approval.
+        if self._edits is not None and edited_data is not None:
             try:
                 diff = compute_diff(
                     draft_id=draft_id,
                     developer_id=self._developer_id,
                     artifact_type=row.artifact_type,
-                    original=row.payload_json,
+                    original=scrubbed_original,
                     edited=final_data,
                 )
                 if diff is not None:
                     self._edits.record(diff)
             except Exception as exc:
                 logger.debug("edit-diff capture skipped: %s", exc)
-
-        # Defense-in-depth: re-scrub the final payload before it leaves the
-        # gate. Catches LLM-hallucinated secret shapes and anything a dev
-        # pasted into an edit between draft and approval.
-        final_data, late_redactions = scrub_payload(final_data)
-        if late_redactions:
-            logger.warning(
-                "Approval scrubber caught %d secret(s) in draft %s: %s",
-                len(late_redactions),
-                draft_id,
-                sorted({r.kind for r in late_redactions}),
-            )
 
         payload = _deserialise(row.artifact_type, final_data)
 
@@ -114,13 +141,24 @@ class ApprovalGate:
         logger.info("Draft %s rejected", draft_id)
 
     def get_approved(self, draft_id: str) -> ApprovedPayload:
-        """Return an ApprovedPayload for an already-approved draft (e.g. for share/re-push)."""
+        """Return an ApprovedPayload for an already-approved draft (e.g. for share/re-push).
+
+        Re-scrubs on read as defense-in-depth: rows persisted by earlier
+        builds (before scrubbing moved to the top of approve()) still get
+        cleaned before leaving the gate.
+        """
         row = self._store.get_draft(draft_id)
         if row is None:
             raise KeyError(f"Draft {draft_id!r} not found")
         if row.status != "approved":
             raise ValueError(f"Draft {draft_id!r} is not approved (status={row.status!r})")
         final_data = json.loads(row.edited_payload_json or row.payload_json)
+        final_data, hits = scrub_payload(final_data)
+        if hits:
+            logger.warning(
+                "get_approved re-scrubbed %d legacy secret(s) in draft %s: %s",
+                len(hits), draft_id, sorted({r.kind for r in hits}),
+            )
         payload = _deserialise(row.artifact_type, final_data)
         return ApprovedPayload(
             draft_id=draft_id,

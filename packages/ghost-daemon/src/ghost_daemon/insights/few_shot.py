@@ -20,6 +20,7 @@ import logging
 from dataclasses import dataclass
 
 from ghost_daemon.insights.edit_store import EditDiff, EditDiffStore
+from ghost_daemon.redaction.scrubber import scrub_payload
 
 logger = logging.getLogger(__name__)
 
@@ -75,8 +76,13 @@ def select_examples(
     examples: list[FewShotExample] = []
     running_chars = 0
     for diff in matching[:max_examples]:
-        proposed = _compact_json(diff.original, _PER_EXAMPLE_PAYLOAD_CHARS)
-        approved = _compact_json(diff.edited, _PER_EXAMPLE_PAYLOAD_CHARS)
+        # Defense-in-depth: scrub on read. Edit-diff shards written by
+        # earlier builds (before the approve-time scrub landed) still get
+        # cleaned before their content reaches the next LLM prompt.
+        safe_original, _ = scrub_payload(diff.original)
+        safe_edited, _ = scrub_payload(diff.edited)
+        proposed = _compact_json(safe_original, _PER_EXAMPLE_PAYLOAD_CHARS)
+        approved = _compact_json(safe_edited, _PER_EXAMPLE_PAYLOAD_CHARS)
         running_chars += len(proposed) + len(approved)
         if running_chars > max_chars:
             break
